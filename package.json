@@ -1,0 +1,39 @@
+{
+  "name": "stat-finder",
+  "private": true,
+  "version": "0.5.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "dev:api": "tsx server/index.ts",
+    "dev:web": "vite",
+    "db:schema": "psql \"$DATABASE_URL\" -f db/schema.sql",
+    "server": "tsx server/index.ts",
+    "build:api": "tsc -p tsconfig.server.json",
+    "build:all": "npm run build && npm run build:api",
+    "start:api": "node dist-server/index.js",
+    "db:nfl": "psql \"$DATABASE_URL\" -f db/003_nfl.sql",
+    "ingest:nfl": "python3 scripts/ingest_nfl.py --start 1999 --end 2025"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "tailwindcss": "latest",
+    "@tailwindcss/vite": "latest",
+    "express": "latest",
+    "pg": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/express": "latest",
+    "@types/pg": "latest",
+    "tsx": "latest",
+    "@types/node": "latest"
+  }
+}
