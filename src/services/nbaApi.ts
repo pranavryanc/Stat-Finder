@@ -21,6 +21,7 @@ export type SearchPayload={
   dayOfWeek:string
   month:string
   specificDate:string
+  playoffRound:string
   conditions:StatCondition[]
   limit:number
   offset:number
@@ -46,5 +47,5 @@ export type NbaQaReport={
 }
 export const getNbaQa=()=>json<NbaQaReport>(`${API_BASE}/api/nba/qa`)
 
-export type AggregateSearchPayload=Omit<SearchPayload,'opponent'|'resultFilter'|'dayOfWeek'|'month'|'specificDate'> & {scope:Exclude<SearchScope,'Game'>}
+export type AggregateSearchPayload=Omit<SearchPayload,'opponent'|'resultFilter'> & {scope:Exclude<SearchScope,'Game'>}
 export const searchNbaAggregate=(payload:AggregateSearchPayload)=>json<{total:number;records:GameRecord[];closest:ClosestPerformance[];coverage:NbaCoverage}>(`${API_BASE}/api/nba/aggregate-search`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})

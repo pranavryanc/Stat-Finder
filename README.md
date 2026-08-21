@@ -223,3 +223,9 @@ If no NFL game in the loaded 1999+ database was played on the current month/day,
 The permanent NFL Explore library includes passing, rushing, receiving, defense, kicking, team, and playoff searches. Clicking a card loads the conditions into Stat Finder without automatically running the search.
 
 No database migration or data re-import is required for this update.
+
+## Phase 5 filter expansion
+- Reset Filters defaults Season/Career searches to Regular Season.
+- NFL supports regular-season Week 1-18 and playoff-round filters (Wild Card, Divisional, Conference Championship, Super Bowl).
+- NBA supports encoded playoff-round filters (First Round, Conference Semifinals, Conference Finals, NBA Finals).
+- Day-of-week, month, and month/day filters apply to Game, Season, and Career. For Season/Career, matching games are filtered before aggregation.

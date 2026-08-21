@@ -24,6 +24,8 @@ export type SearchHistoryEntry = {
   dayOfWeek: string
   month: string
   specificDate: string
+  playoffRound?: string
+  periodFilter?: string
   sortBy: string
   sortDirection: 'asc' | 'desc'
   totalResults: number

@@ -26,6 +26,8 @@ const PAGE_SIZE = 50
 const DAY_OPTIONS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 const MONTH_OPTIONS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAYS_IN_MONTH = [31,29,31,30,31,30,31,31,30,31,30,31]
+const NBA_PLAYOFF_ROUNDS = [{value:'1',label:'First Round'},{value:'2',label:'Conference Semifinals'},{value:'3',label:'Conference Finals'},{value:'4',label:'NBA Finals'}]
+const NFL_PLAYOFF_ROUNDS = ['Wild Card','Divisional','Conference Championship','Super Bowl']
 
 function formatMonthDay(value: string) {
   const match = value.match(/^(\d{2})-(\d{2})$/)
@@ -76,6 +78,8 @@ export default function App() {
   const [dayOfWeekFilter, setDayOfWeekFilter] = useState<CalendarFilter>('Any')
   const [monthFilter, setMonthFilter] = useState<CalendarFilter>('Any')
   const [specificDateFilter, setSpecificDateFilter] = useState('')
+  const [playoffRoundFilter, setPlayoffRoundFilter] = useState('Any')
+  const [nflPeriodFilter, setNflPeriodFilter] = useState('Any')
   const [sortBy, setSortBy] = useState('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [page, setPage] = useState(0)
@@ -113,6 +117,7 @@ export default function App() {
   const availablePlayers = useMemo(() => activeMeta?.players ?? [], [activeMeta])
   const availablePositions = useMemo(() => sport === 'NBA' ? ['Guard','Forward','Center'] : (activeMeta?.positions ?? []), [activeMeta, sport])
   const activeConditions = currentConditions.filter(c => c.operator !== 'any')
+  const hasStatConditions = activeConditions.length > 0
   const sortOptions = useMemo(() => [
     ...(searchScope === 'Game' ? [{value:'date',label:'Date'}] : []),
     {value:'entity',label:searchType === 'Player' ? 'Player' : 'Team'},
@@ -122,7 +127,7 @@ export default function App() {
     ...defs.map(def => ({value:def.key,label:def.label})),
   ], [defs, searchType, searchScope])
   const closest: ClosestPerformance[] = results?.length === 0 ? nbaClosest : []
-  const rarity = results !== null ? classifyRarity(totalResults) : null
+  const rarity = results !== null && hasStatConditions ? classifyRarity(totalResults) : null
   const shareData: ShareResultData = useMemo(() => {
     const opLabel:Record<string,string>={gte:'≥',eq:'=',lte:'≤',between:'BETWEEN'}
     const conditionLines=activeConditions.map(c=>{
@@ -134,6 +139,8 @@ export default function App() {
     if(seasonOperator!=='Any') filters.push(`Season ${seasonOperator} ${seasonValue}${seasonOperator==='Between'?`–${seasonSecondValue}`:''}`)
     if(searchType==='Player'&&careerYearOperator!=='Any') filters.push(`Career Year ${careerYearOperator} ${careerYearValue}${careerYearOperator==='Between'?`–${careerYearSecondValue}`:''}`)
     if(specificDateFilter) filters.push(`Date: ${formatMonthDay(specificDateFilter)}`)
+    if(sport==='NBA'&&playoffRoundFilter!=='Any') filters.push(`Playoff Round: ${NBA_PLAYOFF_ROUNDS.find(r=>r.value===playoffRoundFilter)?.label ?? playoffRoundFilter}`)
+    if(sport==='NFL'&&nflPeriodFilter!=='Any') filters.push(nflPeriodFilter)
     else { if(monthFilter!=='Any') filters.push(`Month: ${MONTH_OPTIONS[Number(monthFilter)-1]}`); if(dayOfWeekFilter!=='Any') filters.push(`Day: ${DAY_OPTIONS[Number(dayOfWeekFilter)]}`) }
     if(playerFilter!=='Any'&&searchType==='Player') filters.push(`Player: ${playerFilter}`)
     if(teamFilter!=='Any') filters.push(`Team: ${teamFilter}`)
@@ -141,7 +148,7 @@ export default function App() {
     if(positionFilter!=='Any'&&searchType==='Player') filters.push(`Position: ${positionFilter}`)
     if(resultFilter!=='Any') filters.push(`Result: ${resultFilter}`)
     return {sport,searchType:`${searchType} • ${searchScope}`,conditions:conditionLines,filters,total:totalResults,rarity:rarity?.label??'',coverage:nbaCoverage}
-  },[activeConditions,defs,gameStage,seasonOperator,seasonValue,seasonSecondValue,careerYearOperator,careerYearValue,careerYearSecondValue,specificDateFilter,monthFilter,dayOfWeekFilter,playerFilter,searchType,searchScope,teamFilter,opponentFilter,positionFilter,resultFilter,sport,totalResults,rarity,nbaCoverage])
+  },[activeConditions,defs,gameStage,seasonOperator,seasonValue,seasonSecondValue,careerYearOperator,careerYearValue,careerYearSecondValue,specificDateFilter,monthFilter,dayOfWeekFilter,playerFilter,searchType,searchScope,teamFilter,opponentFilter,positionFilter,resultFilter,sport,totalResults,rarity,nbaCoverage,playoffRoundFilter,nflPeriodFilter])
 
 
   useEffect(() => {
@@ -191,6 +198,8 @@ export default function App() {
     setDayOfWeekFilter('Any')
     setMonthFilter('Any')
     setSpecificDateFilter('')
+    setPlayoffRoundFilter('Any')
+    setNflPeriodFilter('Any')
     setSortBy('date')
     setSortDirection('desc')
     setPage(0)
@@ -207,10 +216,10 @@ export default function App() {
     if (searchType === 'Team' && nextScope === 'Career') return
     setSearchScope(nextScope)
     setConditions([])
-    setOpponentFilter('Any'); setResultFilter('Any'); setDayOfWeekFilter('Any'); setMonthFilter('Any'); setSpecificDateFilter('')
+    setOpponentFilter('Any'); setResultFilter('Any'); setPlayoffRoundFilter('Any'); setNflPeriodFilter('Any')
     setSortBy(nextScope === 'Season' ? 'season' : nextScope === 'Career' ? (sport==='NFL'?'passingYards':'points') : 'date')
     setSortDirection('desc'); setPage(0); setTotalResults(0); setResults(null); setNbaClosest([]); setNbaCoverage(null); setSelectedPerformance(null); setSelectedBoxScore(null)
-    if (nextScope !== 'Game' && gameStage === 'Any') setGameStage('Regular Season')
+    if (nextScope !== 'Game') setGameStage('Regular Season')
   }
 
   const updateCondition = (next: StatCondition) =>
@@ -262,6 +271,8 @@ export default function App() {
       dayOfWeek: dayOfWeekFilter,
       month: monthFilter,
       specificDate: specificDateFilter,
+      playoffRound: playoffRoundFilter,
+      periodFilter: nflPeriodFilter,
       sortBy,
       sortDirection,
       totalResults: total,
@@ -278,8 +289,8 @@ export default function App() {
     setDataError('')
     try {
       setLoading(true)
-      const commonGamePayload={ searchType, gameStage, seasonOperator, seasonValue, seasonSecondValue, careerYearOperator, careerYearValue, careerYearSecondValue, team: teamFilter, opponent: opponentFilter, player: searchType === 'Player' ? playerFilter : 'Any', position: searchType === 'Player' ? positionFilter : 'Any', resultFilter, dayOfWeek: dayOfWeekFilter, month: monthFilter, specificDate: specificDateFilter, conditions: currentConditions, limit:PAGE_SIZE, offset:nextPage*PAGE_SIZE, sortBy:nextSortBy, sortDirection:nextSortDirection }
-      const commonAggregatePayload={ scope:searchScope as Exclude<SearchScope,'Game'>, searchType, gameStage, seasonOperator, seasonValue, seasonSecondValue, careerYearOperator, careerYearValue, careerYearSecondValue, team:teamFilter, player:searchType==='Player'?playerFilter:'Any', position:searchType==='Player'?positionFilter:'Any', conditions:currentConditions, limit:PAGE_SIZE, offset:nextPage*PAGE_SIZE, sortBy:nextSortBy, sortDirection:nextSortDirection }
+      const commonGamePayload={ searchType, gameStage, seasonOperator, seasonValue, seasonSecondValue, careerYearOperator, careerYearValue, careerYearSecondValue, team: teamFilter, opponent: opponentFilter, player: searchType === 'Player' ? playerFilter : 'Any', position: searchType === 'Player' ? positionFilter : 'Any', resultFilter, dayOfWeek: dayOfWeekFilter, month: monthFilter, specificDate: specificDateFilter, playoffRound: playoffRoundFilter, periodFilter: nflPeriodFilter, conditions: currentConditions, limit:PAGE_SIZE, offset:nextPage*PAGE_SIZE, sortBy:nextSortBy, sortDirection:nextSortDirection }
+      const commonAggregatePayload={ scope:searchScope as Exclude<SearchScope,'Game'>, searchType, gameStage, seasonOperator, seasonValue, seasonSecondValue, careerYearOperator, careerYearValue, careerYearSecondValue, team:teamFilter, player:searchType==='Player'?playerFilter:'Any', position:searchType==='Player'?positionFilter:'Any', dayOfWeek:dayOfWeekFilter, month:monthFilter, specificDate:specificDateFilter, playoffRound:playoffRoundFilter, periodFilter:nflPeriodFilter, conditions:currentConditions, limit:PAGE_SIZE, offset:nextPage*PAGE_SIZE, sortBy:nextSortBy, sortDirection:nextSortDirection }
       const response = sport === 'NBA'
         ? (searchScope === 'Game' ? await searchNba(commonGamePayload) : await searchNbaAggregate(commonAggregatePayload))
         : (searchScope === 'Game' ? await searchNfl(commonGamePayload) : await searchNflAggregate(commonAggregatePayload))
@@ -319,7 +330,7 @@ export default function App() {
 
   const clear = () => {
     setConditions([])
-    setGameStage('Any')
+    setGameStage(searchScope === 'Game' ? 'Any' : 'Regular Season')
     setSeasonOperator('Any')
     setSeasonValue('')
     setSeasonSecondValue('')
@@ -334,6 +345,8 @@ export default function App() {
     setDayOfWeekFilter('Any')
     setMonthFilter('Any')
     setSpecificDateFilter('')
+    setPlayoffRoundFilter('Any')
+    setNflPeriodFilter('Any')
     setSortBy(searchScope === 'Season' ? 'season' : searchScope === 'Career' ? (sport==='NFL'?'passingYards':'points') : 'date')
     setSortDirection('desc')
     setPage(0)
@@ -386,6 +399,8 @@ export default function App() {
     setDayOfWeekFilter(entry.dayOfWeek)
     setMonthFilter(entry.month)
     setSpecificDateFilter(entry.specificDate)
+    setPlayoffRoundFilter(entry.playoffRound ?? 'Any')
+    setNflPeriodFilter(entry.periodFilter ?? 'Any')
     setSortBy(entry.sortBy)
     setSortDirection(entry.sortDirection)
     setPageView('finder')
@@ -454,10 +469,24 @@ export default function App() {
               <div className="mt-3 space-y-4">
                 <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
                   <div><div className="font-semibold">Season Type</div><div className="mt-1 text-xs text-slate-500">Regular season or postseason</div></div>
-                  <select value={gameStage} onChange={e => { const next=e.target.value as StageFilter; setGameStage(next); if(next==='Playoffs' && resultFilter==='D') setResultFilter('Any') }} className="w-full rounded-xl border border-white/10 bg-[#0b1424] px-3 py-3 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400/50">
+                  <select value={gameStage} onChange={e => { const next=e.target.value as StageFilter; setGameStage(next); if(next==='Playoffs' && resultFilter==='D') setResultFilter('Any'); if(next!=='Playoffs')setPlayoffRoundFilter('Any'); if(sport==='NFL'){if(next==='Regular Season'&&NFL_PLAYOFF_ROUNDS.includes(nflPeriodFilter))setNflPeriodFilter('Any');if(next==='Playoffs'&&nflPeriodFilter.startsWith('Week '))setNflPeriodFilter('Any')} }} className="w-full rounded-xl border border-white/10 bg-[#0b1424] px-3 py-3 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400/50">
                     <option>Any</option><option>Regular Season</option><option>Playoffs</option>
                   </select>
                 </div>
+
+                {sport==='NFL' && <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
+                  <div><div className="font-semibold">Week / Playoff Round</div><div className="mt-1 text-xs text-slate-500">Choose a regular-season week or a specific postseason round</div></div>
+                  <select value={nflPeriodFilter} onChange={e=>{const value=e.target.value;setNflPeriodFilter(value);if(value.startsWith('Week '))setGameStage('Regular Season');else if(NFL_PLAYOFF_ROUNDS.includes(value))setGameStage('Playoffs')}} className="w-full rounded-xl border border-white/10 bg-[#0b1424] px-3 py-3 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400/50">
+                    <option value="Any">Any week / round</option><optgroup label="Regular Season">{Array.from({length:18},(_,i)=>i+1).map(week=><option key={week} value={`Week ${week}`}>Week {week}</option>)}</optgroup><optgroup label="Playoffs">{NFL_PLAYOFF_ROUNDS.map(round=><option key={round} value={round}>{round}</option>)}</optgroup>
+                  </select>
+                </div>}
+
+                {sport==='NBA' && <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
+                  <div><div className="font-semibold">Playoff Round</div><div className="mt-1 text-xs text-slate-500">Filter postseason games to a specific round</div></div>
+                  <select disabled={gameStage!=='Playoffs'} value={playoffRoundFilter} onChange={e=>setPlayoffRoundFilter(e.target.value)} className="w-full rounded-xl border border-white/10 bg-[#0b1424] px-3 py-3 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-40">
+                    <option value="Any">Any playoff round</option>{NBA_PLAYOFF_ROUNDS.map(round=><option key={round.value} value={round.value}>{round.label}</option>)}
+                  </select>
+                </div>}
 
                 <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-start">
                   <div><div className="font-semibold">Season</div><div className="mt-1 text-xs text-slate-500">Exact, before, after, or an inclusive range</div></div>
@@ -485,7 +514,6 @@ export default function App() {
                   </div>
                 </div>}
 
-                {searchScope === 'Game' && <>
                 <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-start">
                   <div><div className="font-semibold">Date Filters</div><div className="mt-1 text-xs text-slate-500">Day of week, calendar month, or a specific month/day</div></div>
                   <div className="grid gap-2 sm:grid-cols-3">
@@ -512,8 +540,6 @@ export default function App() {
                     </label>
                   </div>
                 </div>
-
-                </>}
 
                 <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
                   <div><div className="font-semibold">Team</div><div className="mt-1 text-xs text-slate-500">Limit results to performances for one team</div></div>
@@ -557,9 +583,11 @@ export default function App() {
               <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Season Type</span><span className="float-right font-bold text-cyan-300">{gameStage}</span></div>
               <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Season</span><span className="float-right font-bold text-cyan-300">{seasonOperator === 'Any' ? 'Any' : `${seasonOperator} ${seasonValue || '?'}`}{seasonOperator === 'Between' ? ` – ${seasonSecondValue || '?'}` : ''}</span></div>
               {searchType === 'Player' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Career Year</span><span className="float-right font-bold text-cyan-300">{careerYearOperator === 'Any' ? 'Any' : `${careerYearOperator} ${careerYearValue || '?'}`}{careerYearOperator === 'Between' ? ` – ${careerYearSecondValue || '?'}` : ''}</span></div>}
-              {searchScope === 'Game' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Day</span><span className="float-right font-bold text-cyan-300">{dayOfWeekFilter === 'Any' ? 'Any' : DAY_OPTIONS[Number(dayOfWeekFilter)]}</span></div>}
-              {searchScope === 'Game' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Month</span><span className="float-right font-bold text-cyan-300">{monthFilter === 'Any' ? 'Any' : MONTH_OPTIONS[Number(monthFilter)-1]}</span></div>}
-              {searchScope === 'Game' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Specific Date</span><span className="float-right font-bold text-cyan-300">{formatMonthDay(specificDateFilter)}</span></div>}
+              <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Day</span><span className="float-right font-bold text-cyan-300">{dayOfWeekFilter === 'Any' ? 'Any' : DAY_OPTIONS[Number(dayOfWeekFilter)]}</span></div>
+              <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Month</span><span className="float-right font-bold text-cyan-300">{monthFilter === 'Any' ? 'Any' : MONTH_OPTIONS[Number(monthFilter)-1]}</span></div>
+              <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Specific Date</span><span className="float-right font-bold text-cyan-300">{formatMonthDay(specificDateFilter)}</span></div>
+              {sport==='NBA'&&<div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Playoff Round</span><span className="float-right font-bold text-cyan-300">{playoffRoundFilter==='Any'?'Any':NBA_PLAYOFF_ROUNDS.find(r=>r.value===playoffRoundFilter)?.label}</span></div>}
+              {sport==='NFL'&&<div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Week / Round</span><span className="float-right font-bold text-cyan-300">{nflPeriodFilter}</span></div>}
               <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Team</span><span className="float-right font-bold text-cyan-300">{teamFilter}</span></div>
               {searchType === 'Player' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Player</span><span className="float-right max-w-[170px] truncate font-bold text-cyan-300">{playerFilter}</span></div>}
               {searchScope === 'Game' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Opponent</span><span className="float-right font-bold text-cyan-300">{opponentFilter}</span></div>}
@@ -567,8 +595,8 @@ export default function App() {
               {searchScope === 'Game' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Result</span><span className="float-right font-bold text-cyan-300">{resultFilter === 'Any' ? 'Any' : resultFilter === 'W' ? 'Win' : resultFilter === 'L' ? 'Loss' : 'Draw'}</span></div>}
               {sport === 'NBA' && nbaCoverage && <div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.05] px-3 py-3 text-xs leading-5 text-slate-400"><div className="font-bold text-cyan-300">Effective historical coverage: {nbaCoverage.startSeason} – {nbaCoverage.endSeason}</div><div className="mt-1">{nbaCoverage.message}</div></div>}
             </div>
-            <div className="mt-4 space-y-2">{activeConditions.length ? activeConditions.map(c => { const def = defs.find(d => d.key === c.statistic); const op = { gte: '≥', eq: '=', lte: '≤', between: 'between', any: '' }[c.operator]; return <div key={c.statistic} className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">{def?.label}</span><span className="float-right font-bold text-cyan-300">{op} {c.value}{c.operator === 'between' ? ` – ${c.secondValue ?? '?'}` : ''}</span></div> }) : <div className="rounded-xl border border-dashed border-white/10 px-3 py-5 text-center text-sm text-slate-500">No active stat filters yet.</div>}</div>
-            <button disabled={loading || (sport === 'NBA' && !nbaMeta)} onClick={runSearch} className="mt-5 w-full rounded-xl bg-cyan-400 px-4 py-3.5 font-black text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'SEARCHING…' : `SEARCH ${searchScope.toUpperCase()} PERFORMANCES`}</button>
+            <div className="mt-4 space-y-2">{activeConditions.length ? activeConditions.map(c => { const def = defs.find(d => d.key === c.statistic); const op = { gte: '≥', eq: '=', lte: '≤', between: 'between', any: '' }[c.operator]; return <div key={c.statistic} className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">{def?.label}</span><span className="float-right font-bold text-cyan-300">{op} {c.value}{c.operator === 'between' ? ` – ${c.secondValue ?? '?'}` : ''}</span></div> }) : <div className="rounded-xl border border-dashed border-white/10 px-3 py-5 text-center text-sm text-slate-500">No active stat filters yet. You can search now to browse all performances, then narrow the results with any filter.</div>}</div>
+            <button disabled={loading || (sport === 'NBA' && !nbaMeta)} onClick={runSearch} className="mt-5 w-full rounded-xl bg-cyan-400 px-4 py-3.5 font-black text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'SEARCHING…' : hasStatConditions ? `SEARCH ${searchScope.toUpperCase()} PERFORMANCES` : `SEARCH ALL ${searchScope.toUpperCase()} PERFORMANCES`}</button>
             {dataError && <div className="mt-3 rounded-xl border border-rose-400/20 bg-rose-400/[.06] px-3 py-3 text-xs leading-5 text-rose-200">{dataError}</div>}
             <div className="mt-4 text-xs leading-5 text-slate-500"><strong className="text-slate-400">Coverage:</strong> {sport === 'NBA' ? (nbaMeta ? `${nbaMeta.seasons.at(-1) ?? '—'} through ${nbaMeta.seasons[0] ?? '—'} • ${nbaMeta.counts.games.toLocaleString()} games • source: ${nbaMeta.source}` : 'Connect and ingest the NBA database to enable real searches.') : nflMeta ? `${nflMeta.seasons.at(-1) ?? '—'} through ${nflMeta.seasons[0] ?? '—'} • ${nflMeta.counts.games.toLocaleString()} games • source: ${nflMeta.source}` : 'Run the NFL schema and ingestion steps to enable real searches.'}</div>
           </div></aside>
@@ -576,7 +604,7 @@ export default function App() {
 
         {results !== null && <section ref={resultsRef} className="mt-7 scroll-mt-24 rounded-2xl border border-white/10 bg-white/[.035] p-4 md:p-6">
           {results.length > 0 ? <>
-            <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-xs font-bold uppercase tracking-widest text-cyan-300">Search Results</div><div className="mt-1 flex flex-wrap items-center gap-3"><h2 className="text-3xl font-black">{totalResults.toLocaleString()} {totalResults === 1 ? searchScope : `${searchScope} Performances`} Found</h2>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div>{nbaCoverage && <p className="mt-2 text-sm text-slate-500">Historical coverage for this search: <span className="font-bold text-slate-300">{nbaCoverage.startSeason} – {nbaCoverage.endSeason}</span>.</p>}</div><div className="flex items-center gap-2"><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-cyan-400/20 bg-cyan-400/[.07] px-3 py-2 text-xs font-black text-cyan-200 hover:bg-cyan-400/[.12]">Share Result</button><div className="rounded-full bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-400">{sport === 'NBA' ? 'NBA Stats database' : 'nflverse database'}</div></div></div>
+            <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-xs font-bold uppercase tracking-widest text-cyan-300">{hasStatConditions?'Search Results':'Browse Results'}</div><div className="mt-1 flex flex-wrap items-center gap-3"><h2 className="text-3xl font-black">{totalResults.toLocaleString()} {totalResults === 1 ? searchScope : `${searchScope} Performances`} Found</h2>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div>{!hasStatConditions&&<p className="mt-2 text-sm text-slate-500">Showing all performances that match the selected non-stat filters. Add a stat condition anytime to calculate rarity.</p>}{nbaCoverage && <p className="mt-2 text-sm text-slate-500">Historical coverage for this search: <span className="font-bold text-slate-300">{nbaCoverage.startSeason} – {nbaCoverage.endSeason}</span>.</p>}</div><div className="flex items-center gap-2"><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-cyan-400/20 bg-cyan-400/[.07] px-3 py-2 text-xs font-black text-cyan-200 hover:bg-cyan-400/[.12]">Share Result</button><div className="rounded-full bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-400">{sport === 'NBA' ? 'NBA Stats database' : 'nflverse database'}</div></div></div>
             <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/8 bg-black/20 p-3 sm:flex-row sm:items-end sm:justify-between">
               <div><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Showing</div><div className="mt-1 text-sm font-semibold text-slate-300">{(page*PAGE_SIZE+1).toLocaleString()}–{Math.min((page+1)*PAGE_SIZE,totalResults).toLocaleString()} of {totalResults.toLocaleString()}</div></div>
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -584,13 +612,15 @@ export default function App() {
                 <label className="text-xs font-semibold text-slate-400">Order<select value={sortDirection} onChange={e=>changeSortDirection(e.target.value as SortDirection)} className="mt-1 block rounded-xl border border-white/10 bg-[#0b1424] px-3 py-2.5 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400/50"><option value="desc">Highest / Newest</option><option value="asc">Lowest / Oldest</option></select></label>
               </div>
             </div>
-            <ActiveFilters conditions={activeConditions} defs={defs} gameStage={gameStage} seasonOperator={seasonOperator} seasonValue={seasonValue} seasonSecondValue={seasonSecondValue} careerYearOperator={searchType==='Player'?careerYearOperator:'Any'} careerYearValue={careerYearValue} careerYearSecondValue={careerYearSecondValue} dayOfWeek={dayOfWeekFilter} month={monthFilter} specificDate={specificDateFilter} team={teamFilter} opponent={opponentFilter} player={searchType==='Player'?playerFilter:'Any'} position={searchType==='Player'?positionFilter:'Any'} result={resultFilter} onClearStat={stat=>setConditions(prev=>prev.filter(c=>c.statistic!==stat))} onClearGameStage={()=>setGameStage('Any')} onClearSeason={()=>{setSeasonOperator('Any');setSeasonValue('');setSeasonSecondValue('')}} onClearCareerYear={()=>{setCareerYearOperator('Any');setCareerYearValue('');setCareerYearSecondValue('')}} onClearDayOfWeek={()=>setDayOfWeekFilter('Any')} onClearMonth={()=>setMonthFilter('Any')} onClearSpecificDate={()=>setSpecificDateFilter('')} onClearTeam={()=>setTeamFilter('Any')} onClearOpponent={()=>setOpponentFilter('Any')} onClearPlayer={()=>setPlayerFilter('Any')} onClearPosition={()=>setPositionFilter('Any')} onClearResult={()=>setResultFilter('Any')} />
+            <ActiveFilters conditions={activeConditions} defs={defs} gameStage={gameStage} seasonOperator={seasonOperator} seasonValue={seasonValue} seasonSecondValue={seasonSecondValue} careerYearOperator={searchType==='Player'?careerYearOperator:'Any'} careerYearValue={careerYearValue} careerYearSecondValue={careerYearSecondValue} dayOfWeek={dayOfWeekFilter} month={monthFilter} specificDate={specificDateFilter} playoffRound={sport==='NBA'?playoffRoundFilter:'Any'} periodFilter={sport==='NFL'?nflPeriodFilter:'Any'} team={teamFilter} opponent={opponentFilter} player={searchType==='Player'?playerFilter:'Any'} position={searchType==='Player'?positionFilter:'Any'} result={resultFilter} onClearStat={stat=>setConditions(prev=>prev.filter(c=>c.statistic!==stat))} onClearGameStage={()=>setGameStage('Any')} onClearSeason={()=>{setSeasonOperator('Any');setSeasonValue('');setSeasonSecondValue('')}} onClearCareerYear={()=>{setCareerYearOperator('Any');setCareerYearValue('');setCareerYearSecondValue('')}} onClearDayOfWeek={()=>setDayOfWeekFilter('Any')} onClearMonth={()=>setMonthFilter('Any')} onClearSpecificDate={()=>setSpecificDateFilter('')} onClearPlayoffRound={()=>setPlayoffRoundFilter('Any')} onClearPeriodFilter={()=>setNflPeriodFilter('Any')} onClearTeam={()=>setTeamFilter('Any')} onClearOpponent={()=>setOpponentFilter('Any')} onClearPlayer={()=>setPlayerFilter('Any')} onClearPosition={()=>setPositionFilter('Any')} onClearResult={()=>setResultFilter('Any')} />
             <p className="mt-3 text-sm text-slate-500">Select any performance to view details, then open the full game box score.</p>
             <div className="mt-5 grid gap-3">{results.map(record => <ResultCard key={record.id} record={record} conditions={activeConditions} defs={defs} sortBy={sortBy} sortLabel={sortOptions.find(option => option.value === sortBy)?.label ?? 'Date'} onOpen={setSelectedPerformance} />)}</div>
             {totalResults > PAGE_SIZE && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-5"><button disabled={page===0||loading} onClick={()=>changePage(page-1)} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-300 disabled:cursor-not-allowed disabled:opacity-35">← Previous</button><div className="text-sm font-semibold text-slate-400">Page {page+1} of {Math.ceil(totalResults/PAGE_SIZE).toLocaleString()}</div><button disabled={(page+1)*PAGE_SIZE>=totalResults||loading} onClick={()=>changePage(page+1)} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-300 disabled:cursor-not-allowed disabled:opacity-35">Next →</button></div>}
           </> : <>
-            <div className="rounded-2xl border border-amber-400/20 bg-amber-300/[.06] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-3"><div className="text-xs font-bold uppercase tracking-[.2em] text-amber-300">Never Done — Within Search Coverage</div>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div><h2 className="mt-2 text-3xl font-black">No exact match</h2></div><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-amber-300/20 bg-amber-300/[.07] px-3 py-2 text-xs font-black text-amber-200 hover:bg-amber-300/[.12]">Share Result</button></div><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">No {searchScope.toLowerCase()} {searchType.toLowerCase()} performance in the {sport === 'NBA' ? `valid historical coverage for this search${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}` : `loaded NFL historical coverage${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}`} satisfies every active condition and game filter.</p></div>
-            <div className="mt-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-xl font-bold">Closest {searchScope} Performances</h3><p className="mt-1 text-sm text-slate-500">Ranked across the full valid search coverage using stat-normalized distance, so misses are scaled to the statistic rather than treated as equal raw-unit differences.</p></div>{closest[0]&&<div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.06] px-3 py-2 text-xs text-slate-400"><span className="font-black text-cyan-300">Best match: {closest[0].similarity}%</span> • {closest[0].conditionsMet}/{closest[0].conditionCount} conditions met</div>}</div><div className="mt-4 grid gap-3">{closest.map(item => <ResultCard key={item.record.id} record={item.record} conditions={activeConditions} defs={defs} closestInfo={item} sortBy={sortBy} sortLabel={sortOptions.find(option => option.value === sortBy)?.label ?? 'Date'} onOpen={setSelectedPerformance} />)}</div></div>
+            {hasStatConditions ? <>
+              <div className="rounded-2xl border border-amber-400/20 bg-amber-300/[.06] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-3"><div className="text-xs font-bold uppercase tracking-[.2em] text-amber-300">Never Done — Within Search Coverage</div>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div><h2 className="mt-2 text-3xl font-black">No exact match</h2></div><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-amber-300/20 bg-amber-300/[.07] px-3 py-2 text-xs font-black text-amber-200 hover:bg-amber-300/[.12]">Share Result</button></div><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">No {searchScope.toLowerCase()} {searchType.toLowerCase()} performance in the {sport === 'NBA' ? `valid historical coverage for this search${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}` : `loaded NFL historical coverage${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}`} satisfies every active condition and game filter.</p></div>
+              <div className="mt-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-xl font-bold">Closest {searchScope} Performances</h3><p className="mt-1 text-sm text-slate-500">Ranked across the full valid search coverage using stat-normalized distance, so misses are scaled to the statistic rather than treated as equal raw-unit differences.</p></div>{closest[0]&&<div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.06] px-3 py-2 text-xs text-slate-400"><span className="font-black text-cyan-300">Best match: {closest[0].similarity}%</span> • {closest[0].conditionsMet}/{closest[0].conditionCount} conditions met</div>}</div><div className="mt-4 grid gap-3">{closest.map(item => <ResultCard key={item.record.id} record={item.record} conditions={activeConditions} defs={defs} closestInfo={item} sortBy={sortBy} sortLabel={sortOptions.find(option => option.value === sortBy)?.label ?? 'Date'} onOpen={setSelectedPerformance} />)}</div></div>
+            </> : <div className="rounded-2xl border border-white/10 bg-white/[.035] p-6 text-center"><div className="text-xs font-bold uppercase tracking-[.18em] text-slate-500">No performances found</div><h2 className="mt-2 text-2xl font-black">No records match these filters</h2><p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-400">There are no {searchScope.toLowerCase()} {searchType.toLowerCase()} performances matching the selected non-stat filters. Clear or broaden a filter and search again.</p></div>}
           </>}
         </section>}
         </>}
@@ -678,7 +708,7 @@ function HistoryPage({entries,onRerun,onEdit,onDelete,onClear,onExplore}:{entrie
     if((entry.careerYearOperator??'Any')!=='Any')labels.push(`Career Year ${entry.careerYearOperator} ${entry.careerYearValue??''}${entry.careerYearOperator==='Between'?`–${entry.careerYearSecondValue??''}`:''}`)
     if(entry.dayOfWeek!=='Any')labels.push(DAY_OPTIONS[Number(entry.dayOfWeek)] ?? entry.dayOfWeek)
     if(entry.month!=='Any')labels.push(MONTH_OPTIONS[Number(entry.month)-1] ?? entry.month)
-    if(entry.specificDate)labels.push(formatMonthDay(entry.specificDate))
+    if(entry.specificDate)labels.push(formatMonthDay(entry.specificDate));if((entry.playoffRound??'Any')!=='Any')labels.push(`Playoff Round: ${NBA_PLAYOFF_ROUNDS.find(r=>r.value===entry.playoffRound)?.label??entry.playoffRound}`);if((entry.periodFilter??'Any')!=='Any')labels.push(entry.periodFilter!)
     if(entry.player!=='Any')labels.push(`Player: ${entry.player}`)
     if(entry.team!=='Any')labels.push(`Team: ${entry.team}`)
     if(entry.opponent!=='Any')labels.push(`Opponent: ${entry.opponent}`)
@@ -701,7 +731,7 @@ function SearchableFilter({value,onChange,options,placeholder,listId}:{value:str
   return <div className="relative"><input list={listId} value={display} onChange={e=>onChange(e.target.value.trim()===''?'Any':e.target.value)} onBlur={e=>{const v=e.target.value.trim(); if(!v) onChange('Any')}} placeholder={placeholder} className="w-full rounded-xl border border-white/10 bg-[#0b1424] px-3 py-3 pr-10 text-sm font-semibold text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-400/50"/><datalist id={listId}>{options.map(option=><option key={option} value={option}/>)}</datalist>{value!=='Any'&&<button type="button" onClick={()=>onChange('Any')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white" aria-label="Clear filter">×</button>}</div>
 }
 
-function ActiveFilters({conditions,defs,gameStage,seasonOperator,seasonValue,seasonSecondValue,careerYearOperator,careerYearValue,careerYearSecondValue,dayOfWeek,month,specificDate,team,opponent,player,position,result,onClearStat,onClearGameStage,onClearSeason,onClearCareerYear,onClearDayOfWeek,onClearMonth,onClearSpecificDate,onClearTeam,onClearOpponent,onClearPlayer,onClearPosition,onClearResult}:{conditions:StatCondition[];defs:{key:string;label:string}[];gameStage:string;seasonOperator:string;seasonValue:string;seasonSecondValue:string;careerYearOperator:string;careerYearValue:string;careerYearSecondValue:string;dayOfWeek:string;month:string;specificDate:string;team:string;opponent:string;player:string;position:string;result:string;onClearStat:(stat:string)=>void;onClearGameStage:()=>void;onClearSeason:()=>void;onClearCareerYear:()=>void;onClearDayOfWeek:()=>void;onClearMonth:()=>void;onClearSpecificDate:()=>void;onClearTeam:()=>void;onClearOpponent:()=>void;onClearPlayer:()=>void;onClearPosition:()=>void;onClearResult:()=>void}) {
+function ActiveFilters({conditions,defs,gameStage,seasonOperator,seasonValue,seasonSecondValue,careerYearOperator,careerYearValue,careerYearSecondValue,dayOfWeek,month,specificDate,playoffRound,periodFilter,team,opponent,player,position,result,onClearStat,onClearGameStage,onClearSeason,onClearCareerYear,onClearDayOfWeek,onClearMonth,onClearSpecificDate,onClearPlayoffRound,onClearPeriodFilter,onClearTeam,onClearOpponent,onClearPlayer,onClearPosition,onClearResult}:{conditions:StatCondition[];defs:{key:string;label:string}[];gameStage:string;seasonOperator:string;seasonValue:string;seasonSecondValue:string;careerYearOperator:string;careerYearValue:string;careerYearSecondValue:string;dayOfWeek:string;month:string;specificDate:string;playoffRound:string;periodFilter:string;team:string;opponent:string;player:string;position:string;result:string;onClearStat:(stat:string)=>void;onClearGameStage:()=>void;onClearSeason:()=>void;onClearCareerYear:()=>void;onClearDayOfWeek:()=>void;onClearMonth:()=>void;onClearSpecificDate:()=>void;onClearPlayoffRound:()=>void;onClearPeriodFilter:()=>void;onClearTeam:()=>void;onClearOpponent:()=>void;onClearPlayer:()=>void;onClearPosition:()=>void;onClearResult:()=>void}) {
   const items:{label:string;clear:()=>void}[]=[]
   const opLabel:Record<string,string>={gte:'≥',eq:'=',lte:'≤',between:'Between'}
   for(const c of conditions){const label=defs.find(d=>d.key===c.statistic)?.label??c.statistic;items.push({label:`${label} ${opLabel[c.operator]??c.operator} ${c.value??''}${c.operator==='between'?`–${c.secondValue??''}`:''}`,clear:()=>onClearStat(c.statistic)})}
@@ -710,7 +740,7 @@ function ActiveFilters({conditions,defs,gameStage,seasonOperator,seasonValue,sea
   if(careerYearOperator!=='Any')items.push({label:`Career Year ${careerYearOperator} ${careerYearValue}${careerYearOperator==='Between'?`–${careerYearSecondValue}`:''}`,clear:onClearCareerYear})
   if(dayOfWeek!=='Any')items.push({label:`Day: ${DAY_OPTIONS[Number(dayOfWeek)] ?? dayOfWeek}`,clear:onClearDayOfWeek})
   if(month!=='Any')items.push({label:`Month: ${MONTH_OPTIONS[Number(month)-1] ?? month}`,clear:onClearMonth})
-  if(specificDate)items.push({label:`Date: ${formatMonthDay(specificDate)}`,clear:onClearSpecificDate})
+  if(specificDate)items.push({label:`Date: ${formatMonthDay(specificDate)}`,clear:onClearSpecificDate});if(playoffRound!=='Any')items.push({label:`Playoff Round: ${NBA_PLAYOFF_ROUNDS.find(r=>r.value===playoffRound)?.label??playoffRound}`,clear:onClearPlayoffRound});if(periodFilter!=='Any')items.push({label:periodFilter,clear:onClearPeriodFilter})
   if(team!=='Any')items.push({label:`Team: ${team}`,clear:onClearTeam});if(opponent!=='Any')items.push({label:`Opponent: ${opponent}`,clear:onClearOpponent});if(player!=='Any')items.push({label:`Player: ${player}`,clear:onClearPlayer});if(position!=='Any')items.push({label:`Position: ${position}`,clear:onClearPosition});if(result!=='Any')items.push({label:`Result: ${result}`,clear:onClearResult})
   if(!items.length)return null
   return <div className="mt-4"><div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Active filters</div><div className="flex flex-wrap gap-2">{items.map((item,i)=><button type="button" key={`${item.label}-${i}`} onClick={item.clear} title="Clear this filter" className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-rose-400/30 hover:text-white">{item.label} <span className="ml-1 text-slate-500">×</span></button>)}</div></div>

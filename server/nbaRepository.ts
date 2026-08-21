@@ -19,6 +19,7 @@ type SearchBody = {
   dayOfWeek?: string
   month?: string
   specificDate?: string
+  playoffRound?: string
   conditions?: Condition[]
   limit?: number
   offset?: number
@@ -104,6 +105,10 @@ function buildWhere(body: SearchBody, alias: 'p'|'t', stats: Record<string,strin
       add('EXTRACT(MONTH FROM g.game_date)::int = ?',specificMonth)
       add('EXTRACT(DAY FROM g.game_date)::int = ?',specificDay)
     }
+  }
+  if(body.playoffRound && body.playoffRound!=='Any') {
+    const round=Number(body.playoffRound)
+    if(Number.isInteger(round) && round>=1 && round<=4){ add("substring(g.game_id,8,1)::int = ?",round); clauses.push("g.season_type = 'Playoffs'") }
   }
   const s1=seasonStart(body.seasonValue), s2=seasonStart(body.seasonSecondValue)
   if(body.seasonOperator && body.seasonOperator!=='Any' && s1!==undefined){
