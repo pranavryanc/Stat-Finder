@@ -234,19 +234,24 @@ ON CONFLICT(game_id,team) DO UPDATE SET
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--season', type=int)
-    ap.add_argument('--start', type=int, default=1999)
+    ap.add_argument('--start', type=int)
     ap.add_argument('--end', type=int)
     args = ap.parse_args()
 
     if args.season is not None:
         seasons = [args.season]
-    else:
+    elif args.start is not None or args.end is not None:
+        start = args.start if args.start is not None else 1999
         end = args.end if args.end is not None else default_end_season()
-        if args.start < 1999:
+
+        if start < 1999:
             raise ValueError('Standardized nflverse weekly player/team stats are supported from 1999 onward.')
-        if end < args.start:
+        if end < start:
             raise ValueError('--end must be >= --start')
-        seasons = list(range(args.start, end + 1))
+
+        seasons = list(range(start, end + 1))
+    else:
+        seasons = [default_end_season()]
 
     with psycopg.connect(DB) as conn:
         for season in seasons:
@@ -260,6 +265,30 @@ def main():
                 and clean(r.get('away_score')) is not None
             ]
 
+            complete_ids = {
+                row[0]
+                for row in conn.execute(
+                    '''
+                    SELECT g.game_id
+                    FROM nfl_games g
+                    WHERE g.season = %s
+                      AND (
+                          SELECT COUNT(*)
+                          FROM nfl_team_games t
+                          WHERE t.game_id = g.game_id
+                      ) >= 2
+                      AND EXISTS (
+                          SELECT 1
+                          FROM nfl_player_games p
+                          WHERE p.game_id = g.game_id
+                      )
+                    ''',
+                    (season,),
+                ).fetchall()
+            }
+
+            print(f'Already complete in Stat Finder: {len(complete_ids)}')
+
             game_rows = []
             game_info = {}
             for g in schedule:
@@ -268,6 +297,10 @@ def main():
                 away = normalize_team(s(g, 'away_team'))
                 if not game_id or not home or not away:
                     continue
+
+                if game_id in complete_ids:
+                    continue
+
                 home_score = int(n(g, 'home_score') or 0)
                 away_score = int(n(g, 'away_score') or 0)
                 game_type = s(g, 'game_type') or 'REG'
@@ -290,9 +323,13 @@ def main():
             with conn.cursor() as cur:
                 cur.executemany(GAME_SQL, game_rows)
             conn.commit()
-            print(f'Completed games upserted: {len(game_rows)}')
+            print(f'New/incomplete games upserted: {len(game_rows)}')
 
             completed_ids = set(game_info)
+
+            if not completed_ids:
+                print('No new completed games to process.')
+                continue
 
             print('Downloading nflverse player weekly stats...')
             player_rows = records(retry('player stats download', lambda: load_player_week(season)))

@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY scripts/requirements.txt ./scripts/requirements.txt
+RUN pip install --no-cache-dir -r scripts/requirements.txt
+
+COPY scripts ./scripts
+
+CMD ["sh", "-c", "python scripts/ingest_nba.py && python scripts/ingest_nfl.py"]
