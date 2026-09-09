@@ -27,6 +27,28 @@ TEAM_ALIASES = {
     'OAK': 'LV',
 }
 
+REPAIRED_TEAM_GAME_IDS = {
+    '1999_01_BAL_STL',
+    '2000_03_SD_KC',
+    '2000_06_BUF_MIA',
+    '2001_01_PIT_JAX',
+    '2001_02_TEN_JAX',
+    '2001_03_CLE_JAX',
+    '2001_06_BUF_JAX',
+    '2001_09_CIN_JAX',
+    '2001_11_BAL_JAX',
+    '2001_12_GB_JAX',
+    '2001_16_KC_JAX',
+    '2002_01_IND_JAX',
+    '2002_04_NYJ_JAX',
+    '2002_05_PHI_JAX',
+    '2002_08_HOU_JAX',
+    '2002_10_WAS_JAX',
+    '2002_13_PIT_JAX',
+    '2002_14_CLE_JAX',
+    '2002_16_TEN_JAX',
+}
+
 def normalize_team(team):
     if not team:
         return team
@@ -236,6 +258,7 @@ def main():
     ap.add_argument('--season', type=int)
     ap.add_argument('--start', type=int)
     ap.add_argument('--end', type=int)
+    ap.add_argument('--refresh', action='store_true')
     args = ap.parse_args()
 
     if args.season is not None:
@@ -298,7 +321,7 @@ def main():
                 if not game_id or not home or not away:
                     continue
 
-                if game_id in complete_ids:
+                if game_id in complete_ids and not args.refresh:
                     continue
 
                 home_score = int(n(g, 'home_score') or 0)
@@ -418,6 +441,12 @@ def main():
             team_vals = []
             for r in team_rows:
                 game_id = s(r, 'game_id')
+
+                # These games use audited repaired team rows. nflverse's standardized
+                # team rows are missing or corrupted, so never overwrite the repairs.
+                if game_id in REPAIRED_TEAM_GAME_IDS:
+                    continue
+
                 team = normalize_team(s(r, 'team'))
                 opponent = normalize_team(s(r, 'opponent_team'))
                 if not game_id or game_id not in game_info or not team or not opponent:
@@ -468,8 +497,8 @@ def main():
                     if passing_fd is not None or rushing_fd is not None:
                         first_downs = (passing_fd or 0) + (rushing_fd or 0)
 
-                net_pass = pass_y - (n(r, 'sack_yards_lost') or 0)
-                opp_net_pass = opp_pass - (n(opp, 'sack_yards_lost') or 0)
+                net_pass = pass_y + (n(r, 'sack_yards_lost') or 0)
+                opp_net_pass = opp_pass + (n(opp, 'sack_yards_lost') or 0)
 
                 team_vals.append((
                     game_id,

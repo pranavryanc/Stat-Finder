@@ -12,19 +12,20 @@ Stat Finder searches verified game-level sports data for exact statistical combi
 ### NFL
 - Player: Game / Season / Career
 - Team: Game / Season
-- Source: nflverse weekly player/team stats + schedules
-- Initial standardized coverage: 1999–2025
+- Historical source: static historical player-game data for 1970–1998
+- Standardized source: nflverse weekly player/team stats + schedules for 1999–2025
+- Loaded game-level coverage: 1970–2025
 
 Team Career remains disabled for both leagues until franchise-history mapping is explicitly defined.
 
-## NFL data source
+## NFL data sources
 
-The NFL importer uses `nflreadpy`, the Python interface for nflverse. It loads:
-- schedules/results
-- week-level unified player stats (offense, defense, kicking)
-- week-level team stats
+NFL data is loaded from two non-overlapping sources:
 
-No NFL statistics in the UI are synthetic after the NFL tables are populated.
+- **1970–1998:** a static historical player-game dataset derived from the `zynicide/nfl-football-player-stats` dataset. The historical importer reconstructs games, joins player profiles, aggregates supported team statistics, and loads the results into PostgreSQL.
+- **1999–2025:** standardized nflverse data loaded through `nflreadpy`, including schedules/results, unified weekly player statistics, and weekly team statistics.
+
+The two sources meet at the 1998/1999 boundary without overlap. Historical field availability varies by statistic, so the presence of a season in the database does not imply that every modern NFL statistic is equally complete for that season.
 
 ## Existing NBA database
 
@@ -66,9 +67,17 @@ This creates:
 
 ## Import all currently supported NFL history
 
-As of this build, the standardized nflverse player/team stat files support 1999 onward. The 2026 regular season has not started yet, so the historical import currently ends with 2025.
+The loaded NFL database spans 1970–2025 using two import pipelines.
 
-One command:
+For 1970–1998, place the historical source JSON files in `data/historical_nfl/` and run:
+
+```bash
+python3 scripts/ingest_nfl_historical.py --start 1970 --end 1998
+```
+
+The historical source files are intentionally gitignored and are not committed to the repository.
+
+For standardized nflverse coverage from 1999–2025, run:
 
 ```bash
 python3 scripts/ingest_nfl.py --start 1999 --end 2025
@@ -80,11 +89,12 @@ or:
 npm run ingest:nfl
 ```
 
-The script processes seasons sequentially and UPSERTs rows, so rerunning it is safe.
+Both importers UPSERT rows, so rerunning an already loaded season does not create duplicate records.
 
-To test one season first:
+To test individual seasons:
 
 ```bash
+python3 scripts/ingest_nfl_historical.py --season 1998
 python3 scripts/ingest_nfl.py --season 2025
 ```
 
@@ -151,27 +161,35 @@ NFL Player Game supports passing, rushing, receiving, defense, and kicking filte
 - tackles/solo/assisted tackles, sacks, defensive INT, forced fumbles, recoveries, defensive TD
 - field goals made/attempted, long FG, extra points made
 
-NFL Team Game includes scoring, passing, rushing, total offense, opponent/defensive production, takeaways/turnovers, and differentials where nflverse supplies or supports the metric.
+NFL Team Game includes scoring, passing, rushing, total offense, opponent/defensive production, takeaways/turnovers, and differentials where the underlying source supplies or supports the metric. Field availability varies in the 1970–1998 historical dataset.
 
 NFL Player Season/Career and NFL Team Season aggregate directly from the verified game-level tables. Rarity, closest performances, sorting, pagination, history, date/team/opponent/result filters, and box-score drill-down reuse the existing Stat Finder behavior.
 
 ## Intentional data-quality limits
 
-- NFL historical claims currently begin in 1999 because that is the standardized range of the nflverse player/team stats used here.
+- NFL game-level coverage currently begins in 1970. The 1970–1998 historical source does not provide every modern statistic with equal completeness; standardized nflverse weekly player/team statistics begin in 1999.
 - Third-down conversions are left out of the live NFL filter catalog for now rather than fabricating them from incomplete summary fields. They can be added later from play-by-play enrichment.
 - Team Career is deferred until franchise relocation/name history is mapped explicitly.
-- NFL Team total yards are computed as net passing yards (passing yards minus sack yards lost) plus rushing yards.
+- NFL Team total yards are computed as net passing yards plus rushing yards. nflverse reports `sack_yards_lost` as negative values, so net passing yards are calculated as gross passing yards plus `sack_yards_lost`.
 - Career passer rating is calculated from career aggregate passing totals, not as a simple average of game passer ratings.
 
-## NFL known team-stat gaps
+## NFL team-stat gap repair
 
-A small set of 19 NFL games in the nflverse standardized team-stat files are missing one or both team rows. Apply the gap registry after `db/003_nfl.sql`:
+The 19 previously identified incomplete nflverse team-stat games have been repaired and are now included in NFL Team Game and Team Season searches.
+
+The repair is implemented in `scripts/repair_nfl_team_gaps.py`.
+
+- 16 Jacksonville games from 2001–2002 are reconstructed from nflverse play-by-play.
+- 3 games with no usable nflverse team/play-by-play data are restored from audited archival box-score statistics: `1999_01_BAL_STL`, `2000_03_SD_KC`, and `2000_06_BUF_MIA`.
+- The repair UPSERTs both team rows where needed and validates that all 19 games have exactly two team rows.
+
+Run the repair after standardized NFL ingestion:
 
 ```bash
-psql stat_finder < db/004_nfl_data_gaps.sql
+python3 scripts/repair_nfl_team_gaps.py
 ```
 
-NFL Team Game and Team Season searches exclude these known incomplete games from result counts, rarity, closest-performance calculations, and season aggregation. NFL Player searches are unaffected. The API coverage message reports the number of excluded team games.
+`db/004_nfl_data_gaps.sql` is retained for compatibility with databases that previously registered these games as exclusions, but the obsolete exclusions are no longer used by NFL searches.
 
 The NFL importer also normalizes historical team abbreviations (`SD`→`LAC`, `STL`→`LA`, `OAK`→`LV`, `JAC`→`JAX`, `WSH`→`WAS`) so schedule and weekly-stat rows join consistently.
 
@@ -184,11 +202,11 @@ NBA positions are normalized into **Guard / Forward / Center** groups so hybrid 
 
 ## NFL completeness update
 
-This version expands the real NFL layer without changing the 1999+ standardized nflverse coverage boundary.
+This version expands searchable NFL game-level history to 1970 while retaining 1999 as the boundary for standardized nflverse weekly player/team statistics.
 
 New items:
 - Position-aware ordering of NFL Player stat sections (all stats remain searchable).
-- NFL Data QA tab with season inventory, known team gaps, unexpected gaps, and field-presence checks.
+- NFL Data QA tab with season inventory, linkage-integrity checks, coverage boundaries, and field-presence checks.
 - Expanded kicking support: field-goal percentage, XP attempts, XP percentage, and longest field goal in Season/Career aggregation.
 - Sacks taken is now available in NFL Player Season/Career searches.
 - Third-down conversions are intentionally hidden from the public Team filter catalog until their historical completeness is separately validated.
@@ -206,7 +224,7 @@ source .venv/bin/activate
 python3 scripts/ingest_nfl.py --start 1999 --end 2025
 ```
 
-The existing `nfl_data_gaps` exclusions remain in effect for the 19 known incomplete team-stat games.
+The 19 previously excluded nflverse team-stat games have been repaired and are now included in NFL Team searches.
 
 ## Phase 5.1 — NFL Explore + Featured Today
 
@@ -218,7 +236,7 @@ NFL Featured Today includes:
 - On This Day 100+ rushing-yard searches,
 - On This Day team 30+ point searches.
 
-If no NFL game in the loaded 1999+ database was played on the current month/day, the API finds the nearest calendar date with an NFL game and the UI switches to Around This Day automatically.
+If no NFL game in the loaded 1970–2025 database was played on the current month/day, the API finds the nearest calendar date with an NFL game and the UI switches to Around This Day automatically.
 
 The permanent NFL Explore library includes passing, rushing, receiving, defense, kicking, team, and playoff searches. Clicking a card loads the conditions into Stat Finder without automatically running the search.
 
