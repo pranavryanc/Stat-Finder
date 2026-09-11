@@ -8,3 +8,4 @@ __pycache__/
 # Local historical NFL datasets
 data/historical_nfl/
 historical_nfl_source/
+*.dump
