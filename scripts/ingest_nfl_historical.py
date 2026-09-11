@@ -336,18 +336,45 @@ def ratio(
     return numerator / denominator
 
 
-def regular_season_games(season: int) -> int:
+def regular_season_games(
+    season: int,
+    team: str | None = None,
+) -> int:
     """
     Number of scheduled regular-season games per team.
 
-    1970-1977: 14 games
+    1950-1959 NFL: 12 games
+    1960:
+        NFL: 12 games
+        AFL: 14 games
+    1961-1977: 14 games
     1978-1981: 16 games
     1982:       9 games because of the players' strike
     1983-1986: 16 games
     1987:      15 games because of the players' strike
     1988-1998: 16 games
     """
-    if 1970 <= season <= 1977:
+    if 1950 <= season <= 1959:
+        return 12
+
+    if season == 1960:
+        afl_teams = {
+            "BOS",
+            "BUF",
+            "DEN",
+            "DTX",
+            "HOU",
+            "LAC",
+            "NYT",
+            "LV",
+        }
+
+        if team in afl_teams:
+            return 14
+
+        return 12
+
+    if 1961 <= season <= 1977:
         return 14
 
     if 1978 <= season <= 1981:
@@ -443,6 +470,7 @@ def raw_game_key(
         team_b,
     )
 
+
 def historical_game_id(
     row: dict[str, Any],
 ) -> str:
@@ -455,22 +483,12 @@ def historical_game_id(
         f"{team_a}_{team_b}"
     )
 
+
 def group_playoff_dates(
     playoff_dates: list[str],
 ) -> list[list[str]]:
     """
     Convert individual Saturday/Sunday playoff dates into rounds.
-
-    Example:
-
-    [
-        ["1997-12-27", "1997-12-28"],
-        ["1998-01-03", "1998-01-04"],
-        ["1998-01-11"],
-        ["1998-01-25"],
-    ]
-
-    Each pair of adjacent dates is treated as one postseason round.
     """
     if not playoff_dates:
         return []
@@ -509,7 +527,6 @@ def playoff_types_by_date(
 ) -> dict[str, str]:
     rounds = group_playoff_dates(playoff_dates)
 
-    # 1970-1977 had no Wild Card round.
     if len(rounds) == 3:
         round_types = [
             "DIV",
@@ -517,10 +534,6 @@ def playoff_types_by_date(
             "SB",
         ]
 
-    # Most later seasons, including the special 1982 tournament,
-    # contain four postseason rounds. For consistency with the
-    # application's existing schema, we map them to:
-    # WC -> DIV -> CON -> SB.
     elif len(rounds) == 4:
         round_types = [
             "WC",
@@ -561,36 +574,103 @@ def build_game_metadata(
             historical_game_id(row)
         ].append(row)
 
-    regular_game_limit = (
-        regular_season_games(season)
-    )
-
     playoff_ids: set[str] = set()
 
-    for game_id, game_rows in grouped.items():
-        if any(
-            int(
-                row.get("game_number") or 0
-            ) > regular_game_limit
-            for row in game_rows
-        ):
-            playoff_ids.add(game_id)
+    if season < 1970:
+        team_games: dict[
+            str,
+            dict[str, str],
+        ] = defaultdict(dict)
 
-    playoff_dates = sorted(
-        {
-            str(
-                grouped[game_id][0]["date"]
+        for game_id, game_rows in grouped.items():
+            game_date = str(
+                game_rows[0]["date"]
             )
-            for game_id in playoff_ids
-        }
-    )
 
-    game_type_by_date = (
-        playoff_types_by_date(
-            season,
-            playoff_dates,
+            teams = {
+                normalize_team(row["team"])
+                for row in game_rows
+            }
+
+            for team in teams:
+                team_games[team][
+                    game_id
+                ] = game_date
+
+        for team, games_for_team in (
+            team_games.items()
+        ):
+            ordered_games = sorted(
+                games_for_team.items(),
+                key=lambda item: (
+                    item[1],
+                    item[0],
+                ),
+            )
+
+            regular_limit = (
+                regular_season_games(
+                    season,
+                    team,
+                )
+            )
+
+            for (
+                game_id,
+                _game_date,
+            ) in ordered_games[
+                regular_limit:
+            ]:
+                playoff_ids.add(
+                    game_id
+                )
+
+        game_type_by_date: dict[
+            str,
+            str,
+        ] = {}
+
+    else:
+        regular_game_limit = (
+            regular_season_games(
+                season
+            )
         )
-    )
+
+        for (
+            game_id,
+            game_rows,
+        ) in grouped.items():
+            if any(
+                int(
+                    row.get(
+                        "game_number"
+                    ) or 0
+                )
+                > regular_game_limit
+                for row in game_rows
+            ):
+                playoff_ids.add(
+                    game_id
+                )
+
+        playoff_dates = sorted(
+            {
+                str(
+                    grouped[
+                        game_id
+                    ][0]["date"]
+                )
+                for game_id in playoff_ids
+            }
+        )
+
+        game_type_by_date = (
+            playoff_types_by_date(
+                season,
+                playoff_dates,
+            )
+        )
 
     result: dict[
         str,
@@ -651,17 +731,12 @@ def build_game_metadata(
             elif location == "N":
                 neutral_votes += 1
 
-        # A true neutral-site game should have neutral
-        # markings across the game records. Using a
-        # majority protects against isolated bad rows.
         neutral = (
             neutral_votes
             > len(game_rows) / 2
         )
 
         if neutral:
-            # Historical source does not identify a
-            # meaningful home side for neutral games.
             away_team, home_team = sorted(
                 (team_a, team_b)
             )
@@ -684,9 +759,6 @@ def build_game_metadata(
                 else team_a
             )
 
-        # Collect all reported score pairs and choose
-        # the most common one. Some source rows contain
-        # isolated incorrect scores.
         score_votes: dict[
             tuple[int, int],
             int,
@@ -747,17 +819,20 @@ def build_game_metadata(
         )
 
         if is_playoff:
-            game_type = (
-                game_type_by_date.get(
-                    game_date
+            if season < 1970:
+                game_type = "POST"
+            else:
+                game_type = (
+                    game_type_by_date.get(
+                        game_date
+                    )
                 )
-            )
 
-            if game_type is None:
-                raise ValueError(
-                    f"Could not classify "
-                    f"playoff game {game_id}."
-                )
+                if game_type is None:
+                    raise ValueError(
+                        f"Could not classify "
+                        f"playoff game {game_id}."
+                    )
 
             season_type = "Playoffs"
 
@@ -797,6 +872,7 @@ def build_game_metadata(
 
     return result
 
+
 def build_player_rows(
     rows: list[dict[str, Any]],
     profiles: dict[int, dict[str, Any]],
@@ -829,10 +905,6 @@ def build_player_rows(
             "position"
         )
 
-        # IMPORTANT:
-        # The source labels passing attempts/completions
-        # backwards. This reversal was validated against
-        # real 1998 quarterback game lines.
         completions = as_number(
             row.get(
                 "passing_attempts"
@@ -957,7 +1029,6 @@ def build_player_rows(
             )
         )
 
-        # The source itself misspells "attempts".
         extra_points_attempted = as_number(
             row.get(
                 "point_after_attemps"
@@ -1064,8 +1135,6 @@ def build_player_rows(
                     else None
                 ),
 
-                # This source does not establish that
-                # defense_tackles means solo tackles.
                 "tackles": tackles,
                 "solo_tackles": None,
 
@@ -1079,7 +1148,6 @@ def build_player_rows(
                     defensive_interceptions
                 ),
 
-                # Not reliably present in this source.
                 "forced_fumbles": None,
                 "fumble_recoveries": None,
 
@@ -1162,8 +1230,6 @@ def build_team_rows(
             )
         )
 
-        # Passing labels are reversed
-        # in the source.
         completions = sum(
             as_number(
                 row.get(
@@ -1270,71 +1336,29 @@ def build_team_rows(
                 "opponent": opponent,
 
                 "points": points,
-
-                # Cannot reliably reconstruct
-                # every historical TD type.
                 "touchdowns": None,
-
                 "field_goals": field_goals,
-
                 "completions": completions,
-
-                "passing_attempts": (
-                    passing_attempts
-                ),
-
-                "passing_yards": (
-                    passing_yards
-                ),
-
-                "passing_touchdowns": (
-                    passing_touchdowns
-                ),
-
-                "interceptions_thrown": (
-                    interceptions_thrown
-                ),
-
-                "rushing_attempts": (
-                    rushing_attempts
-                ),
-
-                "rushing_yards": (
-                    rushing_yards
-                ),
-
-                "rushing_touchdowns": (
-                    rushing_touchdowns
-                ),
-
-                # Official team passing offense
-                # includes sack yardage. Do not
-                # fake total offense here.
+                "passing_attempts": passing_attempts,
+                "passing_yards": passing_yards,
+                "passing_touchdowns": passing_touchdowns,
+                "interceptions_thrown": interceptions_thrown,
+                "rushing_attempts": rushing_attempts,
+                "rushing_yards": rushing_yards,
+                "rushing_touchdowns": rushing_touchdowns,
                 "total_yards": None,
-
                 "first_downs": None,
-
                 "third_down_conversions": None,
-
-                "points_allowed": (
-                    points_allowed
-                ),
-
+                "points_allowed": points_allowed,
                 "yards_allowed": None,
-
                 "passing_yards_allowed": None,
-
                 "rushing_yards_allowed": None,
-
                 "sacks": sacks,
-
                 "interceptions": interceptions,
-
                 "forced_fumbles": None,
                 "takeaways": None,
                 "turnovers": None,
                 "turnover_differential": None,
-
                 "point_differential": (
                     points - points_allowed
                 ),
@@ -1515,10 +1539,10 @@ def ingest(
         )
 
     for season in seasons:
-        if not 1970 <= season <= 1998:
+        if not 1950 <= season <= 1998:
             raise ValueError(
                 "This importer currently "
-                "supports 1970 through 1998."
+                "supports 1950 through 1998."
             )
 
     print(
@@ -1560,9 +1584,6 @@ def ingest(
     total_player_rows = 0
     total_team_rows = 0
 
-    # One transaction for the entire requested range.
-    # If any season fails validation or insertion,
-    # PostgreSQL rolls the entire run back.
     with psycopg.connect(
         DATABASE_URL
     ) as conn:
@@ -1658,7 +1679,7 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Import historical NFL "
             "player/game data from "
-            "1970 through 1998."
+            "1950 through 1998."
         )
     )
 
@@ -1669,7 +1690,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help=(
             "Import one NFL season, "
-            "for example --season 1998."
+            "for example --season 1960."
         ),
     )
 
@@ -1679,7 +1700,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Import every supported "
             "historical season "
-            "from 1970 through 1998."
+            "from 1950 through 1998."
         ),
     )
 
@@ -1741,7 +1762,7 @@ def requested_seasons(
 
         return list(
             range(
-                1970,
+                1950,
                 1999,
             )
         )
