@@ -14,7 +14,7 @@ the source file. For team rows, that means:
 All other team-stat columns remain NULL rather than being filled with zero.
 No player-game rows are created by this importer.
 
-Default supported range for this phase: 1933-1949.
+Supported pre-1950 range: 1920-1949.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import psycopg
 
 
 DEFAULT_DATA_PATH = Path("data/historical_nfl/nfl_results_1920-1969.csv")
-DEFAULT_START = 1933
+DEFAULT_START = 1920
 DEFAULT_END = 1949
 SOURCE_NAME = "nfl_elo_1920_1969"
 
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--season", type=int, help="Import one season.")
-    group.add_argument("--all", action="store_true", help="Import 1933-1949.")
+    group.add_argument("--all", action="store_true", help="Import 1920-1949.")
     group.add_argument(
         "--range",
         nargs=2,
