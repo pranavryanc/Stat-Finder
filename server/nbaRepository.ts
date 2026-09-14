@@ -28,6 +28,7 @@ type SearchBody = {
 }
 
 const playerStats: Record<string,string> = {
+  fantasyPoints:'(coalesce(p.points,0) + 1.2*coalesce(p.rebounds,0) + 1.5*coalesce(p.assists,0) + 3*coalesce(p.steals,0) + 3*coalesce(p.blocks,0) - coalesce(p.turnovers,0))',
   points:'p.points', rebounds:'p.rebounds', assists:'p.assists', steals:'p.steals', blocks:'p.blocks',
   threePointersMade:'p.three_made', fieldGoalsMade:'p.fg_made', fieldGoalsAttempted:'p.fg_attempted',
   freeThrowsMade:'p.ft_made', freeThrowsAttempted:'p.ft_attempted', offensiveRebounds:'p.offensive_rebounds',
@@ -65,16 +66,18 @@ const nbaCareerSeasonCte = `career_seasons AS (
 function buildWhere(body: SearchBody, alias: 'p'|'t', stats: Record<string,string>, includeConditions = true, coverageStart?: number) {
   const clauses:string[]=[]; const values:unknown[]=[]
   const add=(sql:string,v:unknown)=>{values.push(v);clauses.push(sql.replace('?',`$${values.length}`))}
+  const addMulti=(column:string,raw?:string)=>{const items=(raw??'').split('||').map(x=>x.trim()).filter(x=>x&&x!=='Any');if(!items.length)return;const marks=items.map(item=>{values.push(item);return `$${values.length}`});clauses.push(`${column} IN (${marks.join(',')})`)}
   if(alias==='p') clauses.push('p.played IS TRUE')
   if(coverageStart!==undefined) add("substring(g.season,1,4)::int >= ?",coverageStart)
   if(body.gameStage && body.gameStage!=='Any') add('g.season_type = ?',body.gameStage)
-  if(body.team && body.team!=='Any') add(`${alias}.team = ?`,body.team)
-  if(body.opponent && body.opponent!=='Any') add(`${alias}.opponent = ?`,body.opponent)
-  if(alias==='p' && body.player && body.player!=='Any') add('p.player_name = ?',body.player)
+  addMulti(`${alias}.team`,body.team)
+  addMulti(`${alias}.opponent`,body.opponent)
+  if(alias==='p') addMulti('p.player_name',body.player)
   if(alias==='p' && body.position && body.position!=='Any') {
-    const normalized=nbaPositionClause('p.position',body.position)
-    if(normalized) clauses.push(`(${normalized})`)
-    else add('p.position = ?',body.position)
+    const positions=body.position.split('||').map(x=>x.trim()).filter(Boolean)
+    const parts=positions.map(position=>nbaPositionClause('p.position',position)).filter(Boolean) as string[]
+    if(parts.length===positions.length) clauses.push(`(${parts.map(x=>`(${x})`).join(' OR ')})`)
+    else addMulti('p.position',body.position)
   }
   if(alias==='p' && body.careerYearOperator && body.careerYearOperator!=='Any') {
     const c1=careerYearNumber(body.careerYearValue), c2=careerYearNumber(body.careerYearSecondValue)
@@ -126,7 +129,7 @@ function buildWhere(body: SearchBody, alias: 'p'|'t', stats: Record<string,strin
   return {sql: clauses.length?`WHERE ${clauses.join(' AND ')}`:'', values}
 }
 
-const playerJson = `jsonb_build_object('points',p.points,'rebounds',p.rebounds,'assists',p.assists,'steals',p.steals,'blocks',p.blocks,'threePointersMade',p.three_made,'fieldGoalsMade',p.fg_made,'fieldGoalsAttempted',p.fg_attempted,'freeThrowsMade',p.ft_made,'freeThrowsAttempted',p.ft_attempted,'offensiveRebounds',p.offensive_rebounds,'defensiveRebounds',p.defensive_rebounds,'turnovers',p.turnovers,'personalFouls',p.personal_fouls,'minutes',p.minutes,'fieldGoalPct',p.fg_pct,'threePointPct',p.three_pct,'freeThrowPct',p.ft_pct,'plusMinus',p.plus_minus)`
+const playerJson = `jsonb_build_object('fantasyPoints',(coalesce(p.points,0) + 1.2*coalesce(p.rebounds,0) + 1.5*coalesce(p.assists,0) + 3*coalesce(p.steals,0) + 3*coalesce(p.blocks,0) - coalesce(p.turnovers,0)),'points',p.points,'rebounds',p.rebounds,'assists',p.assists,'steals',p.steals,'blocks',p.blocks,'threePointersMade',p.three_made,'fieldGoalsMade',p.fg_made,'fieldGoalsAttempted',p.fg_attempted,'freeThrowsMade',p.ft_made,'freeThrowsAttempted',p.ft_attempted,'offensiveRebounds',p.offensive_rebounds,'defensiveRebounds',p.defensive_rebounds,'turnovers',p.turnovers,'personalFouls',p.personal_fouls,'minutes',p.minutes,'fieldGoalPct',p.fg_pct,'threePointPct',p.three_pct,'freeThrowPct',p.ft_pct,'plusMinus',p.plus_minus)`
 const teamJson = `jsonb_build_object('points',t.points,'rebounds',t.rebounds,'assists',t.assists,'steals',t.steals,'blocks',t.blocks,'threePointersMade',t.three_made,'threePointersAttempted',t.three_attempted,'fieldGoalsMade',t.fg_made,'fieldGoalsAttempted',t.fg_attempted,'freeThrowsMade',t.ft_made,'freeThrowsAttempted',t.ft_attempted,'fieldGoalPct',t.fg_pct,'threePointPct',t.three_pct,'freeThrowPct',t.ft_pct,'offensiveRebounds',t.offensive_rebounds,'defensiveRebounds',t.defensive_rebounds,'turnovers',t.turnovers,'personalFouls',t.personal_fouls,'pointDifferential',t.plus_minus,'opponentPoints',opp.points)`
 
 export async function searchNba(body: SearchBody){

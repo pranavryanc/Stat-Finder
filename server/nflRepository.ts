@@ -33,6 +33,12 @@ type Body = {
 }
 
 const playerCols: Record<string, string> = {
+  fantasyPointsStandard4: '(coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0*coalesce(p.receptions,0))',
+  fantasyPointsStandard6: '(coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0*coalesce(p.receptions,0))',
+  fantasyPointsHalfPpr4: '(coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0.5*coalesce(p.receptions,0))',
+  fantasyPointsHalfPpr6: '(coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0.5*coalesce(p.receptions,0))',
+  fantasyPointsPpr4: '(coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 1*coalesce(p.receptions,0))',
+  fantasyPointsPpr6: '(coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 1*coalesce(p.receptions,0))',
   passingYards: 'p.passing_yards',
   passingAttempts: 'p.passing_attempts',
   completions: 'p.completions',
@@ -95,6 +101,12 @@ const teamCols: Record<string, string> = {
 }
 
 const scale: Record<string, number> = {
+  fantasyPointsStandard4: 5,
+  fantasyPointsStandard6: 5,
+  fantasyPointsHalfPpr4: 5,
+  fantasyPointsHalfPpr6: 5,
+  fantasyPointsPpr4: 5,
+  fantasyPointsPpr6: 5,
   passingYards: 50,
   passingAttempts: 8,
   completions: 6,
@@ -198,6 +210,7 @@ function where(body: Body, prefix: 'p' | 't') {
     values.push(v)
     clauses.push(sql.replace('?', `$${values.length}`))
   }
+  const addMulti = (column:string, raw?:string) => { const items=(raw??'').split('||').map(x=>x.trim()).filter(x=>x&&x!=='Any'); if(!items.length)return; const marks=items.map(item=>{values.push(item);return `$${values.length}`}); clauses.push(`${column} IN (${marks.join(',')})`) }
 
   if (body.gameStage && body.gameStage !== 'Any') {
     add('g.season_type=?', body.gameStage)
@@ -234,29 +247,9 @@ function where(body: Body, prefix: 'p' | 't') {
     }
   }
 
-  if (body.team && body.team !== 'Any') {
-    add(`${prefix}.team=?`, body.team)
-  }
-
-  if (body.opponent && body.opponent !== 'Any') {
-    add(`${prefix}.opponent=?`, body.opponent)
-  }
-
-  if (
-    prefix === 'p' &&
-    body.player &&
-    body.player !== 'Any'
-  ) {
-    add('p.player_name=?', body.player)
-  }
-
-  if (
-    prefix === 'p' &&
-    body.position &&
-    body.position !== 'Any'
-  ) {
-    add('p.position=?', body.position)
-  }
+  addMulti(`${prefix}.team`, body.team)
+  addMulti(`${prefix}.opponent`, body.opponent)
+  if (prefix === 'p') { addMulti('p.player_name', body.player); addMulti('p.position', body.position) }
 
   if (
     prefix === 'p' &&
@@ -428,6 +421,37 @@ function where(body: Body, prefix: 'p' | 't') {
   }
 }
 
+
+function nflFantasyStats(row: any) {
+  const passingYards = Number(row.passing_yards ?? 0)
+  const passingTouchdowns = Number(row.passing_touchdowns ?? 0)
+  const passingInterceptions = Number(row.passing_interceptions ?? 0)
+  const rushingYards = Number(row.rushing_yards ?? 0)
+  const rushingTouchdowns = Number(row.rushing_touchdowns ?? 0)
+  const receivingYards = Number(row.receiving_yards ?? 0)
+  const receivingTouchdowns = Number(row.receiving_touchdowns ?? 0)
+  const receptions = Number(row.receptions ?? 0)
+
+  const score = (passTdPoints: number, receptionPoints: number) =>
+    passingYards / 25 +
+    passTdPoints * passingTouchdowns -
+    2 * passingInterceptions +
+    rushingYards / 10 +
+    6 * rushingTouchdowns +
+    receivingYards / 10 +
+    6 * receivingTouchdowns +
+    receptionPoints * receptions
+
+  return {
+    fantasyPointsStandard4: score(4, 0),
+    fantasyPointsStandard6: score(6, 0),
+    fantasyPointsHalfPpr4: score(4, 0.5),
+    fantasyPointsHalfPpr6: score(6, 0.5),
+    fantasyPointsPpr4: score(4, 1),
+    fantasyPointsPpr6: score(6, 1),
+  }
+}
+
 function record(row: any, body: Body) {
   const stats: Record<string, number> = {}
 
@@ -437,6 +461,8 @@ function record(row: any, body: Body) {
       : teamCols
 
   for (const [key, col] of Object.entries(cols)) {
+    if (key.startsWith('fantasyPoints')) continue
+
     const name = col.split('.').pop()!
 
     if (
@@ -449,6 +475,12 @@ function record(row: any, body: Body) {
         stats[key] =
           Math.round(x * 1000) / 1000
       }
+    }
+  }
+
+  if (body.searchType === 'Player') {
+    for (const [key, value] of Object.entries(nflFantasyStats(row))) {
+      stats[key] = Math.round(value * 1000) / 1000
     }
   }
 

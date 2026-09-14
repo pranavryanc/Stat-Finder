@@ -32,6 +32,18 @@ type Body = {
 }
 
 const pAlias: Record<string, string> = {
+  fantasyPointsStandard4: 'fantasy_points_standard_4',
+  fantasyPointsStandard4PerGame: 'fantasy_points_standard_4_per_game',
+  fantasyPointsStandard6: 'fantasy_points_standard_6',
+  fantasyPointsStandard6PerGame: 'fantasy_points_standard_6_per_game',
+  fantasyPointsHalfPpr4: 'fantasy_points_half_ppr_4',
+  fantasyPointsHalfPpr4PerGame: 'fantasy_points_half_ppr_4_per_game',
+  fantasyPointsHalfPpr6: 'fantasy_points_half_ppr_6',
+  fantasyPointsHalfPpr6PerGame: 'fantasy_points_half_ppr_6_per_game',
+  fantasyPointsPpr4: 'fantasy_points_ppr_4',
+  fantasyPointsPpr4PerGame: 'fantasy_points_ppr_4_per_game',
+  fantasyPointsPpr6: 'fantasy_points_ppr_6',
+  fantasyPointsPpr6PerGame: 'fantasy_points_ppr_6_per_game',
   gamesPlayed: 'games_played',
   seasonsPlayed: 'seasons_played',
   passingYards: 'passing_yards',
@@ -140,6 +152,7 @@ function base(body: Body, prefix: 'p' | 't') {
     v.push(x)
     c.push(sql.replace('?', `$${v.length}`))
   }
+  const addMulti = (column:string, raw?:string) => { const items=(raw??'').split('||').map(x=>x.trim()).filter(x=>x&&x!=='Any'); if(!items.length)return; const marks=items.map(item=>{v.push(item);return `$${v.length}`}); c.push(`${column} IN (${marks.join(',')})`) }
 
   if (
     body.gameStage &&
@@ -223,28 +236,8 @@ function base(body: Body, prefix: 'p' | 't') {
     }
   }
 
-  if (
-    body.team &&
-    body.team !== 'Any'
-  ) {
-    add(`${prefix}.team=?`, body.team)
-  }
-
-  if (
-    prefix === 'p' &&
-    body.player &&
-    body.player !== 'Any'
-  ) {
-    add('p.player_name=?', body.player)
-  }
-
-  if (
-    prefix === 'p' &&
-    body.position &&
-    body.position !== 'Any'
-  ) {
-    add('p.position=?', body.position)
-  }
+  addMulti(`${prefix}.team`, body.team)
+  if (prefix === 'p') { addMulti('p.player_name', body.player); addMulti('p.position', body.position) }
 
   if (
     prefix === 'p' &&
@@ -385,6 +378,18 @@ function playerAgg(
       ) team,
       ${season}
       count(*)::int games_played,
+      sum((coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0*coalesce(p.receptions,0))) fantasy_points_standard_4,
+      avg((coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0*coalesce(p.receptions,0))) fantasy_points_standard_4_per_game,
+      sum((coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0*coalesce(p.receptions,0))) fantasy_points_standard_6,
+      avg((coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0*coalesce(p.receptions,0))) fantasy_points_standard_6_per_game,
+      sum((coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0.5*coalesce(p.receptions,0))) fantasy_points_half_ppr_4,
+      avg((coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0.5*coalesce(p.receptions,0))) fantasy_points_half_ppr_4_per_game,
+      sum((coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0.5*coalesce(p.receptions,0))) fantasy_points_half_ppr_6,
+      avg((coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 0.5*coalesce(p.receptions,0))) fantasy_points_half_ppr_6_per_game,
+      sum((coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 1*coalesce(p.receptions,0))) fantasy_points_ppr_4,
+      avg((coalesce(p.passing_yards,0)/25.0 + 4*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 1*coalesce(p.receptions,0))) fantasy_points_ppr_4_per_game,
+      sum((coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 1*coalesce(p.receptions,0))) fantasy_points_ppr_6,
+      avg((coalesce(p.passing_yards,0)/25.0 + 6*coalesce(p.passing_touchdowns,0) - 2*coalesce(p.passing_interceptions,0) + coalesce(p.rushing_yards,0)/10.0 + 6*coalesce(p.rushing_touchdowns,0) + coalesce(p.receiving_yards,0)/10.0 + 6*coalesce(p.receiving_touchdowns,0) + 1*coalesce(p.receptions,0))) fantasy_points_ppr_6_per_game,
       sum(p.passing_yards) passing_yards,
       avg(p.passing_yards) passing_yards_per_game,
       sum(p.passing_attempts) passing_attempts,
@@ -631,6 +636,18 @@ function condition(
 }
 
 const aggScale: Record<string, number> = {
+  fantasyPointsStandard4: 75,
+  fantasyPointsStandard4PerGame: 5,
+  fantasyPointsStandard6: 75,
+  fantasyPointsStandard6PerGame: 5,
+  fantasyPointsHalfPpr4: 75,
+  fantasyPointsHalfPpr4PerGame: 5,
+  fantasyPointsHalfPpr6: 75,
+  fantasyPointsHalfPpr6PerGame: 5,
+  fantasyPointsPpr4: 75,
+  fantasyPointsPpr4PerGame: 5,
+  fantasyPointsPpr6: 75,
+  fantasyPointsPpr6PerGame: 5,
   gamesPlayed: 3,
   seasonsPlayed: 2,
   passingYards: 500,

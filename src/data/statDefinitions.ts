@@ -3,6 +3,7 @@ import type { SearchType, Sport, StatDefinition } from '../types/search'
 export const statDefinitions: Record<Sport, Record<SearchType, StatDefinition[]>> = {
   NBA: {
     Player: [
+      ['fantasyPoints','Fantasy Points (Yahoo Default)','Fantasy'],
       ['points','Points','Scoring'], ['rebounds','Rebounds','Core'], ['assists','Assists','Core'],
       ['steals','Steals','Defense'], ['blocks','Blocks','Defense'], ['threePointersMade','3-Pointers Made','Shooting'],
       ['fieldGoalsMade','Field Goals Made','Shooting'], ['fieldGoalsAttempted','Field Goals Attempted','Shooting'],
@@ -24,6 +25,12 @@ export const statDefinitions: Record<Sport, Record<SearchType, StatDefinition[]>
   },
   NFL: {
     Player: [
+      ['fantasyPointsStandard4','Fantasy Points — Standard, 4-pt Pass TD','Fantasy'],
+      ['fantasyPointsStandard6','Fantasy Points — Standard, 6-pt Pass TD','Fantasy'],
+      ['fantasyPointsHalfPpr4','Fantasy Points — Half-PPR, 4-pt Pass TD','Fantasy'],
+      ['fantasyPointsHalfPpr6','Fantasy Points — Half-PPR, 6-pt Pass TD','Fantasy'],
+      ['fantasyPointsPpr4','Fantasy Points — PPR, 4-pt Pass TD','Fantasy'],
+      ['fantasyPointsPpr6','Fantasy Points — PPR, 6-pt Pass TD','Fantasy'],
       ['passingYards','Passing Yards','Passing'], ['passingAttempts','Passing Attempts','Passing'], ['completions','Completions','Passing'],
       ['passingTouchdowns','Passing Touchdowns','Passing'], ['interceptions','Interceptions','Passing'], ['completionPercentage','Completion %','Passing'],
       ['sacksTaken','Sacks Taken','Passing'], ['passerRating','Passer Rating','Passing'],
