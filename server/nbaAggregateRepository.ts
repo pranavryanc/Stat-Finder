@@ -20,34 +20,299 @@ const careerSeasonCte=`career_seasons AS (
  SELECT player_id,season,dense_rank() OVER (PARTITION BY player_id ORDER BY substring(season,1,4)::int) AS career_year
  FROM (SELECT DISTINCT p.player_id,g.season FROM nba_player_games p JOIN nba_games g ON g.game_id=p.game_id WHERE p.played IS TRUE) seasons_played
 )`
-function baseWhere(body:Body,isPlayer:boolean,coverageStart:number){
- const clauses:string[]=[];const values:unknown[]=[];const add=(sql:string,v:unknown)=>{values.push(v);clauses.push(sql.replace('?',`$${values.length}`))};const addMulti=(column:string,raw?:string)=>{const items=(raw??'').split('||').map(x=>x.trim()).filter(x=>x&&x!=='Any');if(!items.length)return;const marks=items.map(item=>{values.push(item);return `$${values.length}`});clauses.push(`${column} IN (${marks.join(',')})`)}
- if(isPlayer) clauses.push('p.played IS TRUE')
- add('substring(g.season,1,4)::int >= ?',coverageStart)
- if(body.gameStage&&body.gameStage!=='Any')add('g.season_type = ?',body.gameStage)
- if(body.dayOfWeek&&body.dayOfWeek!=='Any')add('extract(dow from g.game_date)::int = ?',Number(body.dayOfWeek))
- if(body.month&&body.month!=='Any')add('extract(month from g.game_date)::int = ?',Number(body.month))
- if(body.specificDate&&/^\d{2}-\d{2}$/.test(body.specificDate)){const [m,d]=body.specificDate.split('-').map(Number);values.push(m,d);clauses.push(`extract(month from g.game_date)::int=$${values.length-1} AND extract(day from g.game_date)::int=$${values.length}`)}
- if(body.playoffRound&&body.playoffRound!=='Any'){const round=Number(body.playoffRound);if(Number.isInteger(round)&&round>=1&&round<=4){values.push(round);clauses.push(`g.season_type='Playoffs' AND substring(g.game_id,8,1)::int=$${values.length}`)}}
- addMulti(`${isPlayer?'p':'t'}.team`,body.team)
- if(isPlayer)addMulti('p.player_name',body.player)
- if(isPlayer&&body.position&&body.position!=='Any'){const positions=body.position.split('||').map(x=>x.trim()).filter(Boolean);const parts=positions.map(position=>nbaPositionClause('px.position',position)).filter(Boolean) as string[];if(parts.length===positions.length)clauses.push(`EXISTS (SELECT 1 FROM nba_player_games px JOIN nba_games gx ON gx.game_id=px.game_id WHERE px.player_id=p.player_id AND gx.season=g.season AND px.played IS TRUE AND (${parts.map(x=>`(${x})`).join(' OR ')}))`);else addMulti('p.position',body.position)}
- const c1=careerYearNumber(body.careerYearValue),c2=careerYearNumber(body.careerYearSecondValue)
- if(isPlayer&&body.careerYearOperator&&body.careerYearOperator!=='Any'&&c1!==undefined){
-  if(body.careerYearOperator==='Exactly')add('cy.career_year = ?',c1)
-  if(body.careerYearOperator==='Before')add('cy.career_year < ?',c1)
-  if(body.careerYearOperator==='After')add('cy.career_year > ?',c1)
-  if(body.careerYearOperator==='Between'&&c2!==undefined){values.push(Math.min(c1,c2),Math.max(c1,c2));clauses.push(`cy.career_year BETWEEN $${values.length-1} AND $${values.length}`)}
- }
- const s1=seasonStart(body.seasonValue),s2=seasonStart(body.seasonSecondValue)
- if(body.seasonOperator&&body.seasonOperator!=='Any'&&s1!==undefined){
-  if(body.seasonOperator==='Exactly')add("substring(g.season,1,4)::int = ?",s1)
-  if(body.seasonOperator==='Before')add("substring(g.season,1,4)::int < ?",s1)
-  if(body.seasonOperator==='After')add("substring(g.season,1,4)::int > ?",s1)
-  if(body.seasonOperator==='Between'&&s2!==undefined){values.push(Math.min(s1,s2),Math.max(s1,s2));clauses.push(`substring(g.season,1,4)::int BETWEEN $${values.length-1} AND $${values.length}`)}
- }
- return {sql:clauses.length?`WHERE ${clauses.join(' AND ')}`:'',values}
+ 
+function nbaFranchiseExpr(
+  team = 't.team',
+  season = "substring(g.season,1,4)::int",
+) {
+  return `
+    CASE
+      WHEN ${team} IN ('MNL', 'LAL') THEN 'LAL'
+      WHEN ${team} IN ('FTW', 'DET') THEN 'DET'
+      WHEN ${team} IN ('PHW', 'SFW', 'GOS', 'GSW') THEN 'GSW'
+      WHEN ${team} IN ('SYR', 'PHL', 'PHI') THEN 'PHI'
+      WHEN ${team} IN ('TCB', 'MIH', 'STL', 'ATL') THEN 'ATL'
+      WHEN ${team} IN ('ROC', 'CIN', 'KCK', 'SAC') THEN 'SAC'
+
+      WHEN ${team} IN ('CHP', 'CHZ', 'BLT', 'CAP') THEN 'WAS'
+      WHEN ${team} = 'WAS' AND ${season} <= 1950 THEN 'WAS_CAPITOLS'
+      WHEN ${team} = 'WAS' AND ${season} >= 1974 THEN 'WAS'
+
+      WHEN ${team} IN ('SDR', 'HOU') THEN 'HOU'
+      WHEN ${team} IN ('BUF', 'SDC', 'LAC') THEN 'LAC'
+      WHEN ${team} IN ('NOJ', 'UTH', 'UTA') THEN 'UTA'
+      WHEN ${team} IN ('NYN', 'NJN', 'BKN') THEN 'BKN'
+      WHEN ${team} IN ('VAN', 'MEM') THEN 'MEM'
+      WHEN ${team} IN ('SEA', 'OKC') THEN 'OKC'
+
+      WHEN ${team} IN ('CHH', 'CHA') THEN 'CHA'
+      WHEN ${team} IN ('NOH', 'NOK', 'NOP') THEN 'NOP'
+
+      WHEN ${team} IN ('SAN', 'SAS') THEN 'SAS'
+
+      ELSE ${team}
+    END
+  `
 }
+
+function canonicalNbaTeam(team: string) {
+  const map: Record<string, string> = {
+    MNL: 'LAL',
+    LAL: 'LAL',
+
+    FTW: 'DET',
+    DET: 'DET',
+
+    PHW: 'GSW',
+    SFW: 'GSW',
+    GOS: 'GSW',
+    GSW: 'GSW',
+
+    SYR: 'PHI',
+    PHL: 'PHI',
+    PHI: 'PHI',
+
+    TCB: 'ATL',
+    MIH: 'ATL',
+    STL: 'ATL',
+    ATL: 'ATL',
+
+    ROC: 'SAC',
+    CIN: 'SAC',
+    KCK: 'SAC',
+    SAC: 'SAC',
+
+    CHP: 'WAS',
+    CHZ: 'WAS',
+    BLT: 'WAS',
+    CAP: 'WAS',
+    WAS: 'WAS',
+
+    SDR: 'HOU',
+    HOU: 'HOU',
+
+    BUF: 'LAC',
+    SDC: 'LAC',
+    LAC: 'LAC',
+
+    NOJ: 'UTA',
+    UTH: 'UTA',
+    UTA: 'UTA',
+
+    NYN: 'BKN',
+    NJN: 'BKN',
+    BKN: 'BKN',
+
+    VAN: 'MEM',
+    MEM: 'MEM',
+
+    SEA: 'OKC',
+    OKC: 'OKC',
+
+    CHH: 'CHA',
+    CHA: 'CHA',
+
+    NOH: 'NOP',
+    NOK: 'NOP',
+    NOP: 'NOP',
+
+    SAN: 'SAS',
+    SAS: 'SAS',
+  }
+
+  return map[team] ?? team
+}
+function baseWhere(
+    body: Body,
+    isPlayer: boolean,
+    coverageStart: number,
+    teamCareer = false,
+  ) {
+    const clauses: string[] = []
+    const values: unknown[] = []
+  
+    const add = (sql: string, v: unknown) => {
+      values.push(v)
+      clauses.push(sql.replace('?', `$${values.length}`))
+    }
+  
+    const addMulti = (column: string, raw?: string) => {
+      const items = (raw ?? '')
+        .split('||')
+        .map(x => x.trim())
+        .filter(x => x && x !== 'Any')
+  
+      if (!items.length) return
+  
+      const marks = items.map(item => {
+        values.push(item)
+        return `$${values.length}`
+      })
+  
+      clauses.push(`${column} IN (${marks.join(',')})`)
+    }
+  
+    if (isPlayer) clauses.push('p.played IS TRUE')
+
+    if (!teamCareer) {
+        add('substring(g.season,1,4)::int >= ?', coverageStart)
+    }
+    
+    if (body.gameStage && body.gameStage !== 'Any') {
+      add('g.season_type = ?', body.gameStage)
+    }
+  
+    if (body.dayOfWeek && body.dayOfWeek !== 'Any') {
+      add('extract(dow from g.game_date)::int = ?', Number(body.dayOfWeek))
+    }
+  
+    if (body.month && body.month !== 'Any') {
+      add('extract(month from g.game_date)::int = ?', Number(body.month))
+    }
+  
+    if (body.specificDate && /^\d{2}-\d{2}$/.test(body.specificDate)) {
+      const [m, d] = body.specificDate.split('-').map(Number)
+  
+      values.push(m, d)
+  
+      clauses.push(
+        `extract(month from g.game_date)::int=$${values.length - 1} AND extract(day from g.game_date)::int=$${values.length}`,
+      )
+    }
+  
+    if (body.playoffRound && body.playoffRound !== 'Any') {
+      const round = Number(body.playoffRound)
+  
+      if (Number.isInteger(round) && round >= 1 && round <= 4) {
+        values.push(round)
+  
+        clauses.push(
+          `g.season_type='Playoffs' AND substring(g.game_id,8,1)::int=$${values.length}`,
+        )
+      }
+    }
+  
+    if (teamCareer && !isPlayer) {
+      const teams = (body.team ?? '')
+        .split('||')
+        .map(x => x.trim())
+        .filter(x => x && x !== 'Any')
+        .map(canonicalNbaTeam)
+  
+      const uniqueTeams = [...new Set(teams)]
+  
+      if (uniqueTeams.length) {
+        const marks = uniqueTeams.map(team => {
+          values.push(team)
+          return `$${values.length}`
+        })
+  
+        clauses.push(
+          `(${nbaFranchiseExpr(
+            't.team',
+            "substring(g.season,1,4)::int",
+          )}) IN (${marks.join(',')})`,
+        )
+      }
+    } else {
+      addMulti(`${isPlayer ? 'p' : 't'}.team`, body.team)
+    }
+  
+    if (isPlayer) {
+      addMulti('p.player_name', body.player)
+    }
+  
+    if (isPlayer && body.position && body.position !== 'Any') {
+      const positions = body.position
+        .split('||')
+        .map(x => x.trim())
+        .filter(Boolean)
+  
+      const parts = positions
+        .map(position => nbaPositionClause('px.position', position))
+        .filter(Boolean) as string[]
+  
+      if (parts.length === positions.length) {
+        clauses.push(
+          `EXISTS (
+            SELECT 1
+            FROM nba_player_games px
+            JOIN nba_games gx ON gx.game_id=px.game_id
+            WHERE px.player_id=p.player_id
+              AND gx.season=g.season
+              AND px.played IS TRUE
+              AND (${parts.map(x => `(${x})`).join(' OR ')})
+          )`,
+        )
+      } else {
+        addMulti('p.position', body.position)
+      }
+    }
+  
+    const c1 = careerYearNumber(body.careerYearValue)
+    const c2 = careerYearNumber(body.careerYearSecondValue)
+  
+    if (
+      isPlayer &&
+      body.careerYearOperator &&
+      body.careerYearOperator !== 'Any' &&
+      c1 !== undefined
+    ) {
+      if (body.careerYearOperator === 'Exactly') {
+        add('cy.career_year = ?', c1)
+      }
+  
+      if (body.careerYearOperator === 'Before') {
+        add('cy.career_year < ?', c1)
+      }
+  
+      if (body.careerYearOperator === 'After') {
+        add('cy.career_year > ?', c1)
+      }
+  
+      if (body.careerYearOperator === 'Between' && c2 !== undefined) {
+        values.push(Math.min(c1, c2), Math.max(c1, c2))
+  
+        clauses.push(
+          `cy.career_year BETWEEN $${values.length - 1} AND $${values.length}`,
+        )
+      }
+    }
+  
+    const s1 = seasonStart(body.seasonValue)
+    const s2 = seasonStart(body.seasonSecondValue)
+  
+    if (
+      body.seasonOperator &&
+      body.seasonOperator !== 'Any' &&
+      s1 !== undefined
+    ) {
+      if (body.seasonOperator === 'Exactly') {
+        add("substring(g.season,1,4)::int = ?", s1)
+      }
+  
+      if (body.seasonOperator === 'Before') {
+        add("substring(g.season,1,4)::int < ?", s1)
+      }
+  
+      if (body.seasonOperator === 'After') {
+        add("substring(g.season,1,4)::int > ?", s1)
+      }
+  
+      if (body.seasonOperator === 'Between' && s2 !== undefined) {
+        values.push(Math.min(s1, s2), Math.max(s1, s2))
+  
+        clauses.push(
+          `substring(g.season,1,4)::int BETWEEN $${values.length - 1} AND $${values.length}`,
+        )
+      }
+    }
+  
+    return {
+      sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
+      values,
+    }
+  }
 
 function playerAgg(scope:'Season'|'Career',where:string,useCareerYear:boolean){
  const group=scope==='Season'?'p.player_id,p.player_name,g.season':'p.player_id,p.player_name'
@@ -56,12 +321,221 @@ function playerAgg(scope:'Season'|'Career',where:string,useCareerYear:boolean){
  count(*)::int AS games_played,sum(coalesce(p.points,0)+1.2*coalesce(p.rebounds,0)+1.5*coalesce(p.assists,0)+3*coalesce(p.steals,0)+3*coalesce(p.blocks,0)-coalesce(p.turnovers,0))::numeric AS fantasy_points,avg(coalesce(p.points,0)+1.2*coalesce(p.rebounds,0)+1.5*coalesce(p.assists,0)+3*coalesce(p.steals,0)+3*coalesce(p.blocks,0)-coalesce(p.turnovers,0))::numeric AS fantasy_points_per_game,sum(p.points)::numeric AS points,avg(p.points)::numeric AS points_per_game,sum(p.rebounds)::numeric AS rebounds,avg(p.rebounds)::numeric AS rebounds_per_game,sum(p.assists)::numeric AS assists,avg(p.assists)::numeric AS assists_per_game,sum(p.steals)::numeric AS steals,avg(p.steals)::numeric AS steals_per_game,sum(p.blocks)::numeric AS blocks,avg(p.blocks)::numeric AS blocks_per_game,sum(p.three_made)::numeric AS three_pointers_made,avg(p.three_made)::numeric AS three_pointers_per_game,sum(p.three_attempted)::numeric AS three_pointers_attempted,avg(p.three_attempted)::numeric AS three_pointers_attempted_per_game,sum(p.fg_made)::numeric AS field_goals_made,avg(p.fg_made)::numeric AS field_goals_made_per_game,sum(p.fg_attempted)::numeric AS field_goals_attempted,avg(p.fg_attempted)::numeric AS field_goals_attempted_per_game,sum(p.fg_made)::numeric/nullif(sum(p.fg_attempted),0) AS field_goal_pct,sum(p.three_made)::numeric/nullif(sum(p.three_attempted),0) AS three_point_pct,sum(p.ft_made)::numeric AS free_throws_made,avg(p.ft_made)::numeric AS free_throws_made_per_game,sum(p.ft_attempted)::numeric AS free_throws_attempted,avg(p.ft_attempted)::numeric AS free_throws_attempted_per_game,sum(p.ft_made)::numeric/nullif(sum(p.ft_attempted),0) AS free_throw_pct,sum(p.offensive_rebounds)::numeric AS offensive_rebounds,avg(p.offensive_rebounds)::numeric AS offensive_rebounds_per_game,sum(p.defensive_rebounds)::numeric AS defensive_rebounds,avg(p.defensive_rebounds)::numeric AS defensive_rebounds_per_game,sum(p.turnovers)::numeric AS turnovers,avg(p.turnovers)::numeric AS turnovers_per_game,sum(p.personal_fouls)::numeric AS personal_fouls,avg(p.personal_fouls)::numeric AS personal_fouls_per_game,sum(p.minutes)::numeric AS minutes,avg(p.minutes)::numeric AS minutes_per_game,sum(p.plus_minus)::numeric AS plus_minus,avg(p.plus_minus)::numeric AS plus_minus_per_game
  FROM nba_player_games p JOIN nba_games g ON g.game_id=p.game_id${useCareerYear?' JOIN career_seasons cy ON cy.player_id=p.player_id AND cy.season=g.season':''} ${where} GROUP BY ${group}`
 }
-function teamAgg(where:string){return `SELECT t.team AS row_id,t.team AS entity_name,t.team AS team,g.season AS season,g.season AS start_season,g.season AS end_season,1::int AS seasons_played,count(*)::int AS games_played,
- sum(CASE WHEN (CASE WHEN t.team=g.home_team THEN g.home_score ELSE g.away_score END)>(CASE WHEN t.team=g.home_team THEN g.away_score ELSE g.home_score END) THEN 1 ELSE 0 END)::int AS wins,
- sum(CASE WHEN (CASE WHEN t.team=g.home_team THEN g.home_score ELSE g.away_score END)<(CASE WHEN t.team=g.home_team THEN g.away_score ELSE g.home_score END) THEN 1 ELSE 0 END)::int AS losses,
- avg(CASE WHEN (CASE WHEN t.team=g.home_team THEN g.home_score ELSE g.away_score END)>(CASE WHEN t.team=g.home_team THEN g.away_score ELSE g.home_score END) THEN 1.0 ELSE 0.0 END)::numeric AS win_pct,
- sum(t.points)::numeric AS points,avg(t.points)::numeric AS points_per_game,sum(opp.points)::numeric AS opponent_points,avg(opp.points)::numeric AS opponent_points_per_game,sum(CASE WHEN t.team=g.home_team THEN g.home_score-g.away_score ELSE g.away_score-g.home_score END)::numeric AS point_differential,avg(CASE WHEN t.team=g.home_team THEN g.home_score-g.away_score ELSE g.away_score-g.home_score END)::numeric AS point_differential_per_game,sum(t.rebounds)::numeric AS rebounds,avg(t.rebounds)::numeric AS rebounds_per_game,sum(t.assists)::numeric AS assists,avg(t.assists)::numeric AS assists_per_game,sum(t.steals)::numeric AS steals,avg(t.steals)::numeric AS steals_per_game,sum(t.blocks)::numeric AS blocks,avg(t.blocks)::numeric AS blocks_per_game,sum(t.three_made)::numeric AS three_pointers_made,avg(t.three_made)::numeric AS three_pointers_per_game,sum(t.three_attempted)::numeric AS three_pointers_attempted,avg(t.three_attempted)::numeric AS three_pointers_attempted_per_game,sum(t.fg_made)::numeric AS field_goals_made,avg(t.fg_made)::numeric AS field_goals_made_per_game,sum(t.fg_attempted)::numeric AS field_goals_attempted,avg(t.fg_attempted)::numeric AS field_goals_attempted_per_game,sum(t.fg_made)::numeric/nullif(sum(t.fg_attempted),0) AS field_goal_pct,sum(t.three_made)::numeric/nullif(sum(t.three_attempted),0) AS three_point_pct,sum(t.ft_made)::numeric AS free_throws_made,avg(t.ft_made)::numeric AS free_throws_made_per_game,sum(t.ft_attempted)::numeric AS free_throws_attempted,avg(t.ft_attempted)::numeric AS free_throws_attempted_per_game,sum(t.ft_made)::numeric/nullif(sum(t.ft_attempted),0) AS free_throw_pct,sum(t.offensive_rebounds)::numeric AS offensive_rebounds,avg(t.offensive_rebounds)::numeric AS offensive_rebounds_per_game,sum(t.defensive_rebounds)::numeric AS defensive_rebounds,avg(t.defensive_rebounds)::numeric AS defensive_rebounds_per_game,sum(t.turnovers)::numeric AS turnovers,avg(t.turnovers)::numeric AS turnovers_per_game,sum(t.personal_fouls)::numeric AS personal_fouls,avg(t.personal_fouls)::numeric AS personal_fouls_per_game,sum(t.plus_minus)::numeric AS plus_minus,avg(t.plus_minus)::numeric AS plus_minus_per_game
- FROM nba_team_games t JOIN nba_games g ON g.game_id=t.game_id JOIN nba_team_games opp ON opp.game_id=t.game_id AND opp.team_id<>t.team_id ${where} GROUP BY t.team,g.season`}
+function teamAgg(scope: 'Season' | 'Career', where: string) {
+    const franchise = nbaFranchiseExpr(
+      't.team',
+      "substring(g.season,1,4)::int",
+    )
+  
+    const year = "substring(g.season,1,4)::int"
+  
+    const identity =
+      scope === 'Season'
+        ? `
+          t.team AS row_id,
+          t.team AS entity_name,
+          t.team AS team,
+          g.season AS season,
+          g.season AS start_season,
+          g.season AS end_season,
+          1::int AS seasons_played,
+        `
+        : `
+          (${franchise}) AS row_id,
+          (${franchise}) AS entity_name,
+          (${franchise}) AS team,
+          min(g.season) AS start_season,
+          max(g.season) AS end_season,
+          count(DISTINCT g.season)::int AS seasons_played,
+        `
+  
+    const group =
+      scope === 'Season'
+        ? 't.team,g.season'
+        : `(${franchise})`
+  
+    /*
+     * Season searches already use coverageFor() to limit the eligible
+     * seasons when a historical stat is part of the search.
+     *
+     * Career searches are different: the franchise identity, games,
+     * wins, losses, points, etc. should still describe the complete
+     * franchise history. Stats with incomplete historical data are
+     * therefore aggregated only over seasons where that stat is
+     * reliable in this database.
+     */
+    const sumStat = (column: string, start: number) =>
+      scope === 'Career'
+        ? `sum(CASE WHEN ${year} >= ${start} THEN ${column} END)::numeric`
+        : `sum(${column})::numeric`
+  
+    const avgStat = (column: string, start: number) =>
+      scope === 'Career'
+        ? `avg(CASE WHEN ${year} >= ${start} THEN ${column} END)::numeric`
+        : `avg(${column})::numeric`
+  
+    const ratioStat = (
+      numerator: string,
+      denominator: string,
+      start: number,
+    ) =>
+      scope === 'Career'
+        ? `
+          sum(CASE WHEN ${year} >= ${start} THEN ${numerator} END)::numeric /
+          nullif(
+            sum(CASE WHEN ${year} >= ${start} THEN ${denominator} END),
+            0
+          )
+        `
+        : `
+          sum(${numerator})::numeric /
+          nullif(sum(${denominator}),0)
+        `
+  
+    return `
+      SELECT
+        ${identity}
+        count(*)::int AS games_played,
+  
+        sum(
+          CASE
+            WHEN (
+              CASE
+                WHEN t.team=g.home_team THEN g.home_score
+                ELSE g.away_score
+              END
+            ) > (
+              CASE
+                WHEN t.team=g.home_team THEN g.away_score
+                ELSE g.home_score
+              END
+            )
+            THEN 1
+            ELSE 0
+          END
+        )::int AS wins,
+  
+        sum(
+          CASE
+            WHEN (
+              CASE
+                WHEN t.team=g.home_team THEN g.home_score
+                ELSE g.away_score
+              END
+            ) < (
+              CASE
+                WHEN t.team=g.home_team THEN g.away_score
+                ELSE g.home_score
+              END
+            )
+            THEN 1
+            ELSE 0
+          END
+        )::int AS losses,
+  
+        avg(
+          CASE
+            WHEN (
+              CASE
+                WHEN t.team=g.home_team THEN g.home_score
+                ELSE g.away_score
+              END
+            ) > (
+              CASE
+                WHEN t.team=g.home_team THEN g.away_score
+                ELSE g.home_score
+              END
+            )
+            THEN 1.0
+            ELSE 0.0
+          END
+        )::numeric AS win_pct,
+  
+        sum(t.points)::numeric AS points,
+        avg(t.points)::numeric AS points_per_game,
+  
+        sum(opp.points)::numeric AS opponent_points,
+        avg(opp.points)::numeric AS opponent_points_per_game,
+  
+        sum(
+          CASE
+            WHEN t.team=g.home_team
+              THEN g.home_score-g.away_score
+            ELSE g.away_score-g.home_score
+          END
+        )::numeric AS point_differential,
+  
+        avg(
+          CASE
+            WHEN t.team=g.home_team
+              THEN g.home_score-g.away_score
+            ELSE g.away_score-g.home_score
+          END
+        )::numeric AS point_differential_per_game,
+  
+        ${sumStat('t.rebounds', 1982)} AS rebounds,
+        ${avgStat('t.rebounds', 1982)} AS rebounds_per_game,
+  
+        ${sumStat('t.assists', 1982)} AS assists,
+        ${avgStat('t.assists', 1982)} AS assists_per_game,
+  
+        ${sumStat('t.steals', 1985)} AS steals,
+        ${avgStat('t.steals', 1985)} AS steals_per_game,
+  
+        ${sumStat('t.blocks', 1985)} AS blocks,
+        ${avgStat('t.blocks', 1985)} AS blocks_per_game,
+  
+        ${sumStat('t.three_made', 1979)} AS three_pointers_made,
+        ${avgStat('t.three_made', 1979)} AS three_pointers_per_game,
+  
+        ${sumStat('t.three_attempted', 1985)} AS three_pointers_attempted,
+        ${avgStat('t.three_attempted', 1985)} AS three_pointers_attempted_per_game,
+  
+        ${sumStat('t.fg_made', 1946)} AS field_goals_made,
+        ${avgStat('t.fg_made', 1946)} AS field_goals_made_per_game,
+  
+        ${sumStat('t.fg_attempted', 1982)} AS field_goals_attempted,
+        ${avgStat('t.fg_attempted', 1982)} AS field_goals_attempted_per_game,
+  
+        ${ratioStat('t.fg_made', 't.fg_attempted', 1982)} AS field_goal_pct,
+  
+        ${ratioStat('t.three_made', 't.three_attempted', 1985)} AS three_point_pct,
+  
+        ${sumStat('t.ft_made', 1946)} AS free_throws_made,
+        ${avgStat('t.ft_made', 1946)} AS free_throws_made_per_game,
+  
+        ${sumStat('t.ft_attempted', 1963)} AS free_throws_attempted,
+        ${avgStat('t.ft_attempted', 1963)} AS free_throws_attempted_per_game,
+  
+        ${ratioStat('t.ft_made', 't.ft_attempted', 1963)} AS free_throw_pct,
+  
+        ${sumStat('t.offensive_rebounds', 1985)} AS offensive_rebounds,
+        ${avgStat('t.offensive_rebounds', 1985)} AS offensive_rebounds_per_game,
+  
+        ${sumStat('t.defensive_rebounds', 1985)} AS defensive_rebounds,
+        ${avgStat('t.defensive_rebounds', 1985)} AS defensive_rebounds_per_game,
+  
+        ${sumStat('t.turnovers', 1985)} AS turnovers,
+        ${avgStat('t.turnovers', 1985)} AS turnovers_per_game,
+  
+        ${sumStat('t.personal_fouls', 1966)} AS personal_fouls,
+        ${avgStat('t.personal_fouls', 1966)} AS personal_fouls_per_game,
+  
+        sum(t.plus_minus)::numeric AS plus_minus,
+        avg(t.plus_minus)::numeric AS plus_minus_per_game
+  
+      FROM nba_team_games t
+      JOIN nba_games g
+        ON g.game_id=t.game_id
+      JOIN nba_team_games opp
+        ON opp.game_id=t.game_id
+        AND opp.team_id<>t.team_id
+  
+      ${where}
+  
+      GROUP BY ${group}
+    `
+  }
 
 const alias:Record<string,string>={seasonsPlayed:'seasons_played',gamesPlayed:'games_played',fantasyPoints:'fantasy_points',fantasyPointsPerGame:'fantasy_points_per_game',wins:'wins',losses:'losses',winPct:'win_pct',points:'points',pointsPerGame:'points_per_game',opponentPoints:'opponent_points',opponentPointsPerGame:'opponent_points_per_game',pointDifferential:'point_differential',pointDifferentialPerGame:'point_differential_per_game',rebounds:'rebounds',reboundsPerGame:'rebounds_per_game',assists:'assists',assistsPerGame:'assists_per_game',steals:'steals',stealsPerGame:'steals_per_game',blocks:'blocks',blocksPerGame:'blocks_per_game',threePointersMade:'three_pointers_made',threePointersAttempted:'three_pointers_attempted',threePointersPerGame:'three_pointers_per_game',threePointersAttemptedPerGame:'three_pointers_attempted_per_game',fieldGoalsMade:'field_goals_made',fieldGoalsMadePerGame:'field_goals_made_per_game',fieldGoalsAttempted:'field_goals_attempted',fieldGoalsAttemptedPerGame:'field_goals_attempted_per_game',fieldGoalPct:'field_goal_pct',threePointPct:'three_point_pct',freeThrowsMade:'free_throws_made',freeThrowsMadePerGame:'free_throws_made_per_game',freeThrowsAttempted:'free_throws_attempted',freeThrowsAttemptedPerGame:'free_throws_attempted_per_game',freeThrowPct:'free_throw_pct',offensiveRebounds:'offensive_rebounds',offensiveReboundsPerGame:'offensive_rebounds_per_game',defensiveRebounds:'defensive_rebounds',defensiveReboundsPerGame:'defensive_rebounds_per_game',turnovers:'turnovers',turnoversPerGame:'turnovers_per_game',personalFouls:'personal_fouls',personalFoulsPerGame:'personal_fouls_per_game',minutes:'minutes',minutesPerGame:'minutes_per_game',plusMinus:'plus_minus',plusMinusPerGame:'plus_minus_per_game'}
 function conditionWhere(conditions:Condition[],offset=0){const clauses:string[]=[];const values:unknown[]=[];for(const c of conditions){if(c.operator==='any'||c.value===undefined)continue;const col=alias[c.statistic];if(!col)continue;const p=()=>`$${offset+values.length+1}`;if(c.operator==='between'&&c.secondValue!==undefined){values.push(c.value);const p1=`$${offset+values.length}`;values.push(c.secondValue);const p2=`$${offset+values.length}`;clauses.push(`${col} BETWEEN LEAST(${p1},${p2}) AND GREATEST(${p1},${p2})`)}else{values.push(c.value);clauses.push(`${col} ${c.operator==='gte'?'>=':c.operator==='lte'?'<=':'='} $${offset+values.length}`)}}return{sql:clauses.length?`WHERE ${clauses.join(' AND ')}`:'',values}}
@@ -73,13 +547,59 @@ function record(row:any,body:Body){const stats:Record<string,number>={};for(cons
 function explain(stats:Record<string,number>,c:Condition){const actual=stats[c.statistic],v=c.value??0;const target=c.operator==='gte'?`≥ ${v}`:c.operator==='lte'?`≤ ${v}`:c.operator==='eq'?`= ${v}`:`between ${v} and ${c.secondValue}`;const met=actual!==undefined&&(c.operator==='gte'?actual>=v:c.operator==='lte'?actual<=v:c.operator==='eq'?actual===v:c.secondValue!==undefined&&actual>=Math.min(v,c.secondValue)&&actual<=Math.max(v,c.secondValue));return{statistic:c.statistic,actual:actual??null,met,targetText:target,missText:met?undefined:`needed ${target}`,normalizedMiss:met?0:1}}
 
 export async function searchNbaAggregate(body:Body){
- if(body.scope==='Career'&&body.searchType==='Team')throw new Error('Team career search requires franchise mapping and is not enabled yet.')
+ 
  const meta=await pool.query(`SELECT min(substring(season,1,4)::int) min,max(substring(season,1,4)::int) max FROM nba_games`);const min=Number(meta.rows[0].min),max=Number(meta.rows[0].max)
  const dep=body.searchType==='Player'?playerCoverageDependency:teamCoverageDependency;const active=(body.conditions??[]).filter(c=>c.operator!=='any').map(c=>dep[c.statistic]??'points');const coverage=coverageFor(body.searchType,active,min,max)
- const useCareerYear=body.searchType==='Player'&&body.careerYearOperator!==undefined&&body.careerYearOperator!=='Any'&&careerYearNumber(body.careerYearValue)!==undefined;const base=baseWhere(body,body.searchType==='Player',coverage.startYear);const cte=body.searchType==='Player'?playerAgg(body.scope,base.sql,useCareerYear):teamAgg(base.sql);const cond=conditionWhere(body.conditions??[],base.values.length);const withPrefix=useCareerYear?`WITH ${careerSeasonCte}, agg AS (${cte})`:`WITH agg AS (${cte})`
+ const useCareerYear =
+  body.searchType === 'Player' &&
+  body.careerYearOperator !== undefined &&
+  body.careerYearOperator !== 'Any' &&
+  careerYearNumber(body.careerYearValue) !== undefined
+
+const teamCareer =
+  body.searchType === 'Team' &&
+  body.scope === 'Career'
+
+const base = baseWhere(
+  body,
+  body.searchType === 'Player',
+  coverage.startYear,
+  teamCareer,
+)
+
+const cte =
+  body.searchType === 'Player'
+    ? playerAgg(body.scope, base.sql, useCareerYear)
+    : teamAgg(body.scope, base.sql)
+
+const cond = conditionWhere(
+  body.conditions ?? [],
+  base.values.length,
+)
+
+const withPrefix = useCareerYear
+  ? `WITH ${careerSeasonCte}, agg AS (${cte})`
+  : `WITH agg AS (${cte})`
  const count=await pool.query(`${withPrefix} SELECT count(*)::int count FROM agg ${cond.sql}`,[...base.values,...cond.values]);const total=count.rows[0]?.count??0
- const allowedSort=new Set(['season','entity','team',...Object.keys(alias)]);const sort=allowedSort.has(body.sortBy??'')?(body.sortBy==='season'?'start_season':body.sortBy==='entity'?'entity_name':body.sortBy==='team'?'team':alias[body.sortBy!]):(body.scope==='Season'?'start_season':'points');const dir=body.sortDirection==='asc'?'ASC':'DESC';const limit=Math.min(body.limit??50,200),offset=Math.max(body.offset??0,0)
- const rows=await pool.query(`${withPrefix} SELECT * FROM agg ${cond.sql} ORDER BY ${sort} ${dir} NULLS LAST, entity_name ASC LIMIT $${base.values.length+cond.values.length+1} OFFSET $${base.values.length+cond.values.length+2}`,[...base.values,...cond.values,limit,offset])
+ const allowedSort = new Set(['season', 'entity', 'team', ...Object.keys(alias)]);
+
+ const sort = allowedSort.has(body.sortBy ?? '')
+   ? body.sortBy === 'season'
+     ? 'start_season'
+     : body.sortBy === 'entity'
+       ? 'entity_name'
+       : body.sortBy === 'team'
+         ? 'team'
+         : alias[body.sortBy!]
+   : body.scope === 'Season'
+     ? 'start_season'
+     : body.searchType === 'Team'
+       ? 'wins'
+       : 'points';
+ 
+ const dir = body.sortDirection === 'asc' ? 'ASC' : 'DESC';
+ const limit = Math.min(body.limit ?? 50, 200);
+ const offset = Math.max(body.offset ?? 0, 0); const rows=await pool.query(`${withPrefix} SELECT * FROM agg ${cond.sql} ORDER BY ${sort} ${dir} NULLS LAST, entity_name ASC LIMIT $${base.values.length+cond.values.length+1} OFFSET $${base.values.length+cond.values.length+2}`,[...base.values,...cond.values,limit,offset])
  let closest:any[]=[];const activeConditions=(body.conditions??[]).filter(c=>c.operator!=='any'&&c.value!==undefined)
  if(total===0&&activeConditions.length){const co=closestOrder(activeConditions);const shifted=co.values;const sql=co.distance.replace(/\$(\d+)/g,(_,d)=>`$${base.values.length+Number(d)}`);const met=co.met.replace(/\$(\d+)/g,(_,d)=>`$${base.values.length+Number(d)}`);const cr=await pool.query(`${withPrefix} SELECT *,${sql} normalized_distance,${met} conditions_met FROM agg ORDER BY normalized_distance ASC,conditions_met DESC,${body.scope==='Season'?'start_season DESC,':''}entity_name ASC LIMIT 5`,[...base.values,...shifted]);closest=cr.rows.map(r=>{const rec=record(r,body);const explanations=activeConditions.map(c=>explain(rec.stats,c));const distance=Number(r.normalized_distance??0);return{record:rec,distance,similarity:Math.round(100/(1+distance)),conditionsMet:Number(r.conditions_met??0),conditionCount:activeConditions.length,explanations}})}
  return{total,records:rows.rows.map(r=>record(r,body)),closest,coverage}

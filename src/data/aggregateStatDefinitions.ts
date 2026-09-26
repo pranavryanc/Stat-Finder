@@ -80,7 +80,46 @@ const nflTeamSeason: StatDefinition[] = [
   ['turnovers','Turnovers','Game'], ['turnoverDifferential','Turnover Differential','Game'], ['pointDifferential','Point Differential','Game'], ['pointDifferentialPerGame','Point Differential / Game','Rates'],
 ].map(([key,label,section])=>({key,label,section}))
 
+const nflTeamCareer: StatDefinition[] = [
+  ['gamesPlayed','Games Played','Record'],
+  ['wins','Wins','Record'],
+  ['losses','Losses','Record'],
+  ['draws','Draws','Record'],
+  ['winPct','Win %','Record'],
+
+  ['points','Points','Scoring'],
+  ['pointsPerGame','Points / Game','Rates'],
+
+  ['passingYards','Passing Yards','Passing'],
+  ['passingYardsPerGame','Passing Yards / Game','Rates'],
+  ['passingTouchdowns','Passing Touchdowns','Passing'],
+  ['interceptionsThrown','Interceptions Thrown','Passing'],
+
+  ['rushingYards','Rushing Yards','Rushing'],
+  ['rushingYardsPerGame','Rushing Yards / Game','Rates'],
+  ['rushingTouchdowns','Rushing Touchdowns','Rushing'],
+
+  ['totalYards','Total Yards','Offense'],
+  ['totalYardsPerGame','Total Yards / Game','Rates'],
+
+  ['pointsAllowed','Points Allowed','Defense'],
+  ['pointsAllowedPerGame','Points Allowed / Game','Rates'],
+  ['yardsAllowed','Yards Allowed','Defense'],
+  ['yardsAllowedPerGame','Yards Allowed / Game','Rates'],
+  ['sacks','Sacks','Defense'],
+  ['interceptions','Interceptions','Defense'],
+  ['takeaways','Takeaways','Defense'],
+
+  ['turnovers','Turnovers','Game'],
+  ['turnoverDifferential','Turnover Differential','Game'],
+  ['pointDifferential','Point Differential','Game'],
+  ['pointDifferentialPerGame','Point Differential / Game','Rates'],
+].map(([key,label,section])=>({key,label,section}))
+
 export const nflAggregateStatDefinitions: Record<'Season'|'Career', Partial<Record<SearchType,StatDefinition[]>>> = {
   Season:{Player:nflPlayerCommon,Team:nflTeamSeason},
-  Career:{Player:[{key:'seasonsPlayed',label:'Seasons Played',section:'Volume'},...nflPlayerCommon]},
+  Career:{
+  Player:[{key:'seasonsPlayed',label:'Seasons Played',section:'Volume'},...nflPlayerCommon],
+  Team:nflTeamCareer,
+},
 }

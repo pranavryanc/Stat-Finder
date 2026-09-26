@@ -1,4 +1,5 @@
 import { pool } from './db.js'
+import { NFL_TEAM_COVERAGE } from './nflCoverage.js'
 
 type Condition = {
   statistic: string
@@ -144,7 +145,130 @@ career_seasons AS (
   ) seasons_played
 )`
 
-function base(body: Body, prefix: 'p' | 't') {
+function addNflPositionFilter(
+  clauses: string[],
+  values: any[],
+  raw?: string,
+) {
+  const positions = (raw ?? '')
+    .split('||')
+    .map(x => x.trim().toUpperCase())
+    .filter(x => x && x !== 'ANY')
+
+  if (!positions.length) return
+
+  const parts: string[] = []
+
+  for (const position of positions) {
+    if (['K', 'P', 'LS'].includes(position)) {
+      values.push(position)
+      parts.push(`upper(coalesce(p.position, '')) = $${values.length}`)
+    } else {
+      values.push(position)
+      parts.push(`upper(coalesce(p.position_group, '')) = $${values.length}`)
+    }
+  }
+
+  clauses.push(`(${parts.join(' OR ')})`)
+}
+
+function nflFranchiseExpr(
+  team = 't.team',
+  season = 'g.season',
+) {
+  return `
+    CASE
+          /* Cardinals franchise */
+      WHEN ${team} = 'CRD' THEN 'ARI'
+      WHEN ${team} = 'LA'
+        AND ${season} BETWEEN 1960 AND 1987
+        THEN 'ARI'
+      WHEN ${team} = 'PHO' THEN 'ARI'
+      WHEN ${team} = 'ARI' THEN 'ARI'
+
+      /* Patriots franchise */
+      WHEN ${team} = 'BOS'
+        AND ${season} BETWEEN 1960 AND 1970
+        THEN 'NE'
+      WHEN ${team} = 'NE' THEN 'NE'
+
+      /* Chiefs franchise:
+         1952 DTX was an unrelated franchise */
+      WHEN ${team} = 'DTX'
+        AND ${season} BETWEEN 1960 AND 1962
+        THEN 'KC'
+      WHEN ${team} = 'KC' THEN 'KC'
+
+            /* Colts franchise:
+         BAL in 1950 was an unrelated Baltimore Colts team */
+      WHEN ${team} = 'BAL'
+        AND ${season} = 1950
+        THEN 'BAL_1950'
+
+      WHEN ${team} = 'BAL'
+        AND ${season} BETWEEN 1953 AND 1983
+        THEN 'IND'
+      WHEN ${team} = 'IND' THEN 'IND'
+
+      /* Ravens */
+      WHEN ${team} = 'BAL'
+        AND ${season} >= 1996
+        THEN 'BAL'
+
+      /* Titans/Oilers franchise.
+         HOU from 2002 onward is the Texans. */
+      WHEN ${team} = 'HOU'
+        AND ${season} <= 1996
+        THEN 'TEN'
+      WHEN ${team} = 'TEN' THEN 'TEN'
+      WHEN ${team} = 'HOU'
+        AND ${season} >= 2002
+        THEN 'HOU'
+
+      /* Jets franchise */
+      WHEN ${team} = 'NYT'
+        AND ${season} BETWEEN 1960 AND 1962
+        THEN 'NYJ'
+      WHEN ${team} = 'NYJ' THEN 'NYJ'
+
+      /* Raiders franchise */
+      WHEN ${team} = 'RAI'
+        AND ${season} BETWEEN 1982 AND 1994
+        THEN 'LV'
+      WHEN ${team} = 'LV' THEN 'LV'
+
+        /* Rams franchise.
+         LA from 1960-1987 represents the Cardinals in this dataset. */
+      WHEN ${team} = 'LAR'
+        AND ${season} BETWEEN 1937 AND 1949
+        THEN 'LA'
+      WHEN ${team} = 'RAM'
+        AND ${season} BETWEEN 1950 AND 1994
+        THEN 'LA'
+      WHEN ${team} = 'LA'
+        AND ${season} >= 1995
+        THEN 'LA'
+
+      /* Chargers franchise */
+      WHEN ${team} = 'LAC' THEN 'LAC'
+
+      /* Washington franchise */
+      WHEN ${team} = 'WSH'
+        AND ${season} BETWEEN 1932 AND 1949
+        THEN 'WAS'
+      WHEN ${team} = 'WAS' THEN 'WAS'
+
+      /* Every other historical franchise remains separate */
+      ELSE ${team}
+    END
+  `
+}
+
+function base(
+  body: Body,
+  prefix: 'p' | 't',
+  teamCareer = false,
+) {
   const c: string[] = []
   const v: any[] = []
 
@@ -236,8 +360,18 @@ function base(body: Body, prefix: 'p' | 't') {
     }
   }
 
-  addMulti(`${prefix}.team`, body.team)
-  if (prefix === 'p') { addMulti('p.player_name', body.player); addMulti('p.position', body.position) }
+  if (teamCareer) {
+    addMulti(
+      `(${nflFranchiseExpr('t.team', 'g.season')})`,
+      body.team,
+    )
+  } else {
+    addMulti(`${prefix}.team`, body.team)
+  }
+  if (prefix === 'p') {
+    addMulti('p.player_name', body.player)
+    addNflPositionFilter(c, v, body.position)
+  }
 
   if (
     prefix === 'p' &&
@@ -505,16 +639,76 @@ function playerAgg(
   `
 }
 
-function teamAgg(w: string) {
+function teamAgg(
+  scope: 'Season' | 'Career',
+  w: string,
+) {
+  const franchise =
+    nflFranchiseExpr(
+      't.team',
+      'g.season',
+    )
+
+  const identity =
+    scope === 'Season'
+      ? `
+        t.team row_id,
+        t.team entity_name,
+        t.team team,
+        g.season::text season,
+        g.season::text start_season,
+        g.season::text end_season,
+        1::int seasons_played,
+      `
+      : `
+        ${franchise} row_id,
+        ${franchise} entity_name,
+        ${franchise} team,
+        min(g.season)::text start_season,
+        max(g.season)::text end_season,
+        count(DISTINCT g.season)::int seasons_played,
+      `
+
+  const group =
+    scope === 'Season'
+      ? 't.team,g.season'
+      : franchise
+
+  const sumStat = (
+    column: string,
+    stat: string,
+  ) => {
+    if (scope !== 'Career') {
+      return `sum(${column})`
+    }
+
+    const start =
+      NFL_TEAM_COVERAGE[stat]?.start
+
+    return start
+      ? `sum(CASE WHEN g.season >= ${start} THEN ${column} END)`
+      : `sum(${column})`
+  }
+
+  const avgStat = (
+    column: string,
+    stat: string,
+  ) => {
+    if (scope !== 'Career') {
+      return `avg(${column})`
+    }
+
+    const start =
+      NFL_TEAM_COVERAGE[stat]?.start
+
+    return start
+      ? `avg(CASE WHEN g.season >= ${start} THEN ${column} END)`
+      : `avg(${column})`
+  }
+
   return `
     SELECT
-      t.team row_id,
-      t.team entity_name,
-      t.team team,
-      g.season::text season,
-      g.season::text start_season,
-      g.season::text end_season,
-      1::int seasons_played,
+      ${identity}
       count(*)::int games_played,
       sum(
         CASE
@@ -541,34 +735,44 @@ function teamAgg(w: string) {
           ELSE 0
         END
       ) win_pct,
-      sum(t.points) points,
-      avg(t.points) points_per_game,
+
+      ${sumStat('t.points', 'points')} points,
+      ${avgStat('t.points', 'pointsPerGame')} points_per_game,
+
       sum(t.touchdowns) touchdowns,
-      sum(t.passing_yards) passing_yards,
-      avg(t.passing_yards) passing_yards_per_game,
-      sum(t.passing_touchdowns) passing_touchdowns,
-      sum(t.interceptions_thrown) interceptions_thrown,
-      sum(t.rushing_yards) rushing_yards,
-      avg(t.rushing_yards) rushing_yards_per_game,
-      sum(t.rushing_touchdowns) rushing_touchdowns,
-      sum(t.total_yards) total_yards,
-      avg(t.total_yards) total_yards_per_game,
-      sum(t.points_allowed) points_allowed,
-      avg(t.points_allowed) points_allowed_per_game,
-      sum(t.yards_allowed) yards_allowed,
-      avg(t.yards_allowed) yards_allowed_per_game,
-      sum(t.sacks) sacks,
-      sum(t.interceptions) interceptions,
-      sum(t.takeaways) takeaways,
-      sum(t.turnovers) turnovers,
-      sum(t.turnover_differential) turnover_differential,
-      sum(t.point_differential) point_differential,
-      avg(t.point_differential) point_differential_per_game
+
+      ${sumStat('t.passing_yards', 'passingYards')} passing_yards,
+      ${avgStat('t.passing_yards', 'passingYardsPerGame')} passing_yards_per_game,
+      ${sumStat('t.passing_touchdowns', 'passingTouchdowns')} passing_touchdowns,
+      ${sumStat('t.interceptions_thrown', 'interceptionsThrown')} interceptions_thrown,
+
+      ${sumStat('t.rushing_yards', 'rushingYards')} rushing_yards,
+      ${avgStat('t.rushing_yards', 'rushingYardsPerGame')} rushing_yards_per_game,
+      ${sumStat('t.rushing_touchdowns', 'rushingTouchdowns')} rushing_touchdowns,
+
+      ${sumStat('t.total_yards', 'totalYards')} total_yards,
+      ${avgStat('t.total_yards', 'totalYardsPerGame')} total_yards_per_game,
+
+      ${sumStat('t.points_allowed', 'pointsAllowed')} points_allowed,
+      ${avgStat('t.points_allowed', 'pointsAllowedPerGame')} points_allowed_per_game,
+
+      ${sumStat('t.yards_allowed', 'yardsAllowed')} yards_allowed,
+      ${avgStat('t.yards_allowed', 'yardsAllowedPerGame')} yards_allowed_per_game,
+
+      ${sumStat('t.sacks', 'sacks')} sacks,
+      ${sumStat('t.interceptions', 'interceptions')} interceptions,
+      ${sumStat('t.takeaways', 'takeaways')} takeaways,
+      ${sumStat('t.turnovers', 'turnovers')} turnovers,
+      ${sumStat('t.turnover_differential', 'turnoverDifferential')} turnover_differential,
+
+      ${sumStat('t.point_differential', 'pointDifferential')} point_differential,
+      ${avgStat('t.point_differential', 'pointDifferentialPerGame')} point_differential_per_game
+
     FROM nfl_team_games t
     JOIN nfl_games g
       ON g.game_id=t.game_id
     ${w}
-    GROUP BY t.team,g.season
+    GROUP BY ${group}
   `
 }
 
@@ -960,14 +1164,6 @@ function rec(
 export async function searchNflAggregate(
   body: Body,
 ) {
-  if (
-    body.scope === 'Career' &&
-    body.searchType === 'Team'
-  ) {
-    throw new Error(
-      'NFL Team Career requires franchise mapping and is not enabled yet.',
-    )
-  }
 
   const prefix =
     body.searchType === 'Player'
@@ -982,10 +1178,16 @@ export async function searchNflAggregate(
       body.careerYearValue,
     ) !== undefined
 
-  const b =
+
+  const teamCareer =
+    body.searchType === 'Team' &&
+    body.scope === 'Career'
+
+    const b =
     base(
       body,
       prefix,
+      teamCareer,
     )
 
   const cte =
@@ -995,7 +1197,8 @@ export async function searchNflAggregate(
           b.sql,
           useCareerYear,
         )
-      : teamAgg(
+        : teamAgg(
+          body.scope,
           b.sql,
         )
 
@@ -1208,10 +1411,10 @@ export async function searchNflAggregate(
         Number(meta.max),
       limitingStatistic:
         null,
-      message:
+        message:
         body.searchType === 'Team'
-          ? 'NFL team season coverage uses historical game-level data for 1970-1998 and standardized nflverse data from 1999 onward. Historical field availability varies by statistic.'
-          : 'NFL player season/career coverage uses historical game-level data for 1970-1998 and standardized nflverse data from 1999 onward. Historical field availability varies by statistic.',
+          ? 'NFL team coverage uses historical game-level data from 1920 onward. Historical field availability varies by statistic.'
+          : 'NFL player coverage uses historical game-level data from 1920 onward. Historical field availability varies by statistic.',
     },
   }
 }

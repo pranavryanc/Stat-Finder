@@ -202,6 +202,33 @@ function resultExpr(prefix: string) {
   END)`
 }
 
+function addNflPositionFilter(
+  clauses: string[],
+  values: any[],
+  raw?: string,
+) {
+  const positions = (raw ?? '')
+    .split('||')
+    .map(x => x.trim().toUpperCase())
+    .filter(x => x && x !== 'ANY')
+
+  if (!positions.length) return
+
+  const parts: string[] = []
+
+  for (const position of positions) {
+    if (['K', 'P', 'LS'].includes(position)) {
+      values.push(position)
+      parts.push(`upper(coalesce(p.position, '')) = $${values.length}`)
+    } else {
+      values.push(position)
+      parts.push(`upper(coalesce(p.position_group, '')) = $${values.length}`)
+    }
+  }
+
+  clauses.push(`(${parts.join(' OR ')})`)
+}
+
 function where(body: Body, prefix: 'p' | 't') {
   const clauses: string[] = []
   const values: any[] = []
@@ -249,7 +276,10 @@ function where(body: Body, prefix: 'p' | 't') {
 
   addMulti(`${prefix}.team`, body.team)
   addMulti(`${prefix}.opponent`, body.opponent)
-  if (prefix === 'p') { addMulti('p.player_name', body.player); addMulti('p.position', body.position) }
+  if (prefix === 'p') {
+    addMulti('p.player_name', body.player)
+    addNflPositionFilter(clauses, values, body.position)
+  }
 
   if (
     prefix === 'p' &&
@@ -707,9 +737,21 @@ export async function nflMetadata() {
     pool.query(
       "SELECT DISTINCT player_name FROM nfl_player_games WHERE player_name<>'' ORDER BY player_name",
     ),
-    pool.query(
-      "SELECT DISTINCT position FROM nfl_player_games WHERE position IS NOT NULL AND position<>'' ORDER BY position",
-    ),
+    Promise.resolve({
+      rows: [
+        { position: 'QB' },
+        { position: 'RB' },
+        { position: 'WR' },
+        { position: 'TE' },
+        { position: 'OL' },
+        { position: 'DL' },
+        { position: 'LB' },
+        { position: 'DB' },
+        { position: 'K' },
+        { position: 'P' },
+        { position: 'LS' },
+      ],
+    }),
     pool.query(`
       SELECT
         (SELECT count(*) FROM nfl_games)::int games,

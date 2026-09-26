@@ -16,13 +16,33 @@ export const NBA_PLAYER_COVERAGE: Record<string, CoverageRule> = {
 }
 
 export const NBA_TEAM_COVERAGE: Record<string, CoverageRule> = {
-  points:{start:1946,label:'Points'}, assists:{start:1946,label:'Assists'}, fieldGoalsMade:{start:1946,label:'Field Goals Made'},
-  fieldGoalsAttempted:{start:1946,label:'Field Goals Attempted'}, fieldGoalPct:{start:1946,label:'Field Goal %'},
-  freeThrowsMade:{start:1946,label:'Free Throws Made'}, freeThrowsAttempted:{start:1946,label:'Free Throws Attempted'}, freeThrowPct:{start:1946,label:'Free Throw %'},
-  personalFouls:{start:1946,label:'Personal Fouls'}, pointDifferential:{start:1946,label:'Point Differential'}, opponentPoints:{start:1946,label:'Opponent Points'},
-  rebounds:{start:1950,label:'Rebounds'}, steals:{start:1973,label:'Steals'}, blocks:{start:1973,label:'Blocks'},
-  offensiveRebounds:{start:1973,label:'Offensive Rebounds'}, defensiveRebounds:{start:1973,label:'Defensive Rebounds'}, turnovers:{start:1977,label:'Turnovers'},
-  threePointersMade:{start:1979,label:'3-Pointers Made'}, threePointersAttempted:{start:1979,label:'3-Pointers Attempted'}, threePointPct:{start:1979,label:'3-Point %'},
+  points:{start:1946,label:'Points'},
+
+  fieldGoalsMade:{start:1946,label:'Field Goals Made'},
+  freeThrowsMade:{start:1946,label:'Free Throws Made'},
+
+  freeThrowsAttempted:{start:1963,label:'Free Throws Attempted'},
+  freeThrowPct:{start:1963,label:'Free Throw %'},
+
+  personalFouls:{start:1966,label:'Personal Fouls'},
+
+  threePointersMade:{start:1979,label:'3-Pointers Made'},
+
+  rebounds:{start:1982,label:'Rebounds'},
+  assists:{start:1982,label:'Assists'},
+  fieldGoalsAttempted:{start:1982,label:'Field Goals Attempted'},
+  fieldGoalPct:{start:1982,label:'Field Goal %'},
+
+  steals:{start:1985,label:'Steals'},
+  blocks:{start:1985,label:'Blocks'},
+  offensiveRebounds:{start:1985,label:'Offensive Rebounds'},
+  defensiveRebounds:{start:1985,label:'Defensive Rebounds'},
+  turnovers:{start:1985,label:'Turnovers'},
+  threePointersAttempted:{start:1985,label:'3-Pointers Attempted'},
+  threePointPct:{start:1985,label:'3-Point %'},
+
+  pointDifferential:{start:1946,label:'Point Differential'},
+  opponentPoints:{start:1946,label:'Opponent Points'},
 }
 
 export function seasonLabel(start:number){ return `${start}-${String((start+1)%100).padStart(2,'0')}` }

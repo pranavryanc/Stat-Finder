@@ -23,6 +23,12 @@ type SortDirection = 'asc' | 'desc'
 type CalendarFilter = 'Any' | string
 type AppPage = 'finder' | 'explore' | 'history' | 'qa'
 const PAGE_SIZE = 50
+
+function closeMultiSelectFilters() {
+  document.querySelectorAll<HTMLDetailsElement>('details[data-multiselect-filter]').forEach(details => {
+    details.open = false
+  })
+}
 const DAY_OPTIONS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
 const MONTH_OPTIONS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAYS_IN_MONTH = [31,29,31,30,31,30,31,31,30,31,30,31]
@@ -98,13 +104,25 @@ export default function App() {
   const resultsRef = useRef<HTMLElement | null>(null)
   const searchButtonRef = useRef<HTMLButtonElement | null>(null)
 
-  const rawDefs = searchScope === 'Game' ? statDefinitions[sport][searchType] : (sport === 'NBA' ? (aggregateStatDefinitions[searchScope]?.[searchType] ?? []) : (nflAggregateStatDefinitions[searchScope]?.[searchType] ?? []))
+  const rawDefs = searchScope === 'Game'
+    ? statDefinitions[sport][searchType]
+    : sport === 'NBA'
+      ? searchType === 'Team' && searchScope === 'Career'
+        ? ((aggregateStatDefinitions.Career?.Team?.length
+            ? aggregateStatDefinitions.Career.Team
+            : aggregateStatDefinitions.Season?.Team) ?? [])
+        : (aggregateStatDefinitions[searchScope]?.[searchType] ?? [])
+      : searchType === 'Team' && searchScope === 'Career'
+        ? ((nflAggregateStatDefinitions.Career?.Team?.length
+            ? nflAggregateStatDefinitions.Career.Team
+            : nflAggregateStatDefinitions.Season?.Team) ?? [])
+        : (nflAggregateStatDefinitions[searchScope]?.[searchType] ?? [])
   const defs = useMemo(() => sport==='NFL'&&searchType==='Player' ? prioritizeNflDefinitions(rawDefs,positionFilter) : rawDefs, [rawDefs,sport,searchType,positionFilter])
   const grouped = useMemo(
     () => Object.entries(defs.reduce<Record<string, typeof defs>>((acc, d) => {
       ;(acc[d.section] ||= []).push(d)
       return acc
-    }, {})),
+    }, {})).sort(([a], [b]) => a === 'Fantasy' ? 1 : b === 'Fantasy' ? -1 : 0),
     [defs],
   )
   const currentConditions = useMemo(
@@ -180,6 +198,7 @@ export default function App() {
   }, [selectedPerformance, selectedBoxScore])
 
   const updateMode = (nextSport: Sport, nextType: SearchType) => {
+    closeMultiSelectFilters()
     setSport(nextSport)
     setSearchType(nextType)
     setSearchScope('Game')
@@ -214,11 +233,21 @@ export default function App() {
   }
 
   const updateScope = (nextScope: SearchScope) => {
-    if (searchType === 'Team' && nextScope === 'Career') return
+    closeMultiSelectFilters()
     setSearchScope(nextScope)
     setConditions([])
     setOpponentFilter('Any'); setResultFilter('Any'); setPlayoffRoundFilter('Any'); setNflPeriodFilter('Any')
-    setSortBy(nextScope === 'Season' ? 'season' : nextScope === 'Career' ? (sport==='NFL'?'passingYards':'points') : 'date')
+    setSortBy(
+      nextScope === 'Season'
+        ? 'season'
+        : nextScope === 'Career'
+          ? searchType === 'Team'
+            ? 'wins'
+            : sport === 'NFL'
+              ? 'passingYards'
+              : 'points'
+          : 'date'
+    )
     setSortDirection('desc'); setPage(0); setTotalResults(0); setResults(null); setNbaClosest([]); setNbaCoverage(null); setSelectedPerformance(null); setSelectedBoxScore(null)
     if (nextScope !== 'Game') setGameStage('Regular Season')
   }
@@ -310,6 +339,7 @@ export default function App() {
   }
 
   const runSearch = async () => {
+    closeMultiSelectFilters()
     setPage(0)
     await fetchResults(0,sortBy,sortDirection,true,true)
   }
@@ -348,7 +378,17 @@ export default function App() {
     setSpecificDateFilter('')
     setPlayoffRoundFilter('Any')
     setNflPeriodFilter('Any')
-    setSortBy(searchScope === 'Season' ? 'season' : searchScope === 'Career' ? (sport==='NFL'?'passingYards':'points') : 'date')
+    setSortBy(
+      searchScope === 'Season'
+        ? 'season'
+        : searchScope === 'Career'
+          ? searchType === 'Team'
+            ? 'wins'
+            : sport === 'NFL'
+              ? 'passingYards'
+              : 'points'
+          : 'date'
+    )
     setSortDirection('desc')
     setPage(0)
     setTotalResults(0)
@@ -445,7 +485,7 @@ export default function App() {
         <div className="mb-6 max-w-3xl md:mb-8">
           <div className="mb-3 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/8 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-cyan-300">Real NBA + NFL Data</div>
           <h1 className="text-3xl font-black leading-tight tracking-tight sm:text-4xl md:text-5xl">Has anyone ever done <span className="text-cyan-300">this?</span></h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 md:text-base">Build an exact statistical combination and search real NBA or NFL game, season, or career performances. NBA uses the connected NBA Stats database; NFL uses historical game-level data for 1970–1998 plus nflverse game-level data from 1999 onward, loaded into PostgreSQL.</p>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 md:text-base">Build custom statistical combinations and search NBA and NFL history across games, seasons, and careers. Explore player and team performances across the full history of both leagues.</p>
         </div>
 
         <section className="mb-5 grid gap-4 rounded-2xl border border-white/10 bg-white/[.035] p-4 shadow-2xl shadow-black/20 md:grid-cols-2 md:p-5">
@@ -455,8 +495,22 @@ export default function App() {
 
         <section className="mb-5 rounded-2xl border border-white/10 bg-white/[.035] p-4 md:p-5">
           <div className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-500">Stat Window</div>
-          <div className="grid gap-2 sm:grid-cols-3">{(['Game','Season','Career'] as SearchScope[]).map(scope=>{const disabled=(searchType==='Team'&&scope==='Career');return <button key={scope} disabled={disabled} onClick={()=>updateScope(scope)} className={`${pill(searchScope===scope)} disabled:cursor-not-allowed disabled:opacity-35`}>{scope}{scope==='Career'&&searchType==='Team'?' (Franchise later)':''}</button>})}</div>
-          {(sport==='NFL'||searchType==='Team')&&<p className="mt-2 text-xs text-slate-500">{searchType==='Team'?'Team Season search is live. Franchise-history search will be added after franchise identity mapping is defined.':''}</p>}
+          <div className="grid gap-2 sm:grid-cols-3">
+            {(['Game', 'Season', 'Career'] as SearchScope[]).map(scope => (
+              <button
+                key={scope}
+                onClick={() => updateScope(scope)}
+                className={pill(searchScope === scope)}
+              >
+                {scope}
+              </button>
+            ))}
+          </div>
+          {searchType === 'Team' && searchScope === 'Career' && (
+            <p className="mt-2 text-xs text-slate-500">
+              Team Career searches follow franchise history across relocations and name changes.
+            </p>
+          )}
         </section>
 
         <div className="grid min-w-0 gap-4 md:gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -466,7 +520,7 @@ export default function App() {
             {sport==='NFL'&&searchType==='Player'&&positionFilter!=='Any'&&<div className="mt-4 rounded-xl border border-cyan-400/10 bg-cyan-400/[.04] px-3 py-2 text-xs text-slate-500">Showing all NFL player stats; sections most relevant to <span className="font-bold text-cyan-300">{positionFilter.replaceAll('||', ', ')}</span> are listed first.</div>}
             {grouped.map(([section, sectionDefs]) => <details key={`${sport}-${searchType}-${searchScope}-${section}`} className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/10"><summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>{section}</span><span className="text-base text-slate-500">⌄</span></span></summary><div className="border-t border-white/8 px-4">{sectionDefs.map(def => <StatRow key={def.key} definition={def} condition={currentConditions.find(c => c.statistic === def.key)!} onChange={updateCondition} />)}</div></details>)}
 
-            <details className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/10">
+            <details className="relative z-20 mt-4 rounded-xl border border-white/10 bg-black/10">
               <summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>Additional Filters</span><span className="text-base text-slate-500">⌄</span></span></summary>
               <div className="space-y-4 border-t border-white/8 p-4">
                 <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
@@ -730,13 +784,20 @@ function HistoryPage({entries,onRerun,onEdit,onDelete,onClear,onExplore}:{entrie
 function MultiSelectFilter({value,onChange,options,placeholder,searchable=false}:{value:string;onChange:(value:string)=>void;options:string[];placeholder:string;searchable?:boolean}) {
   const [query,setQuery]=useState('')
   const selected=value==='Any'||!value?[]:value.split('||').map(item=>item.trim()).filter(Boolean)
-  const visible=searchable&&query.trim()?options.filter(option=>option.toLowerCase().includes(query.trim().toLowerCase())).slice(0,100):options
+  const normalizedQuery=query.trim().toLowerCase()
+  const visible=searchable
+    ? normalizedQuery
+      ? options.filter(option=>option.toLowerCase().includes(normalizedQuery)).slice(0,100)
+      : options.filter(option=>selected.includes(option))
+    : options
   const toggle=(option:string)=>{const next=selected.includes(option)?selected.filter(item=>item!==option):[...selected,option];onChange(next.length?next.join('||'):'Any')}
-  return <details className="relative rounded-xl border border-white/10 bg-[#0b1424]">
+  return <details data-multiselect-filter className="relative rounded-xl border border-white/10 bg-[#0b1424]">
     <summary className="cursor-pointer list-none px-3 py-3 text-sm font-semibold text-slate-100 marker:hidden"><span className="flex items-center justify-between gap-3"><span className={selected.length?'':'text-slate-500'}>{selected.length?selected.join(', '):placeholder}</span><span className="text-slate-500">⌄</span></span></summary>
     <div className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-white/10 bg-[#0b1424] p-2 shadow-2xl">
       {searchable&&<input value={query} onChange={e=>setQuery(e.target.value)} onClick={e=>e.stopPropagation()} placeholder="Type to filter…" className="mb-2 w-full rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm outline-none focus:border-cyan-400/50"/>}
       {selected.length>0&&<button type="button" onClick={()=>onChange('Any')} className="mb-1 w-full rounded-lg px-2 py-2 text-left text-xs font-bold text-slate-400 hover:bg-white/5 hover:text-white">Clear all</button>}
+      {searchable&&!normalizedQuery&&selected.length===0&&<div className="px-2 py-3 text-sm text-slate-500">Type a player name to search.</div>}
+      {searchable&&normalizedQuery&&visible.length===0&&<div className="px-2 py-3 text-sm text-slate-500">No matching players.</div>}
       {visible.map(option=><label key={option} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-white/5"><input type="checkbox" checked={selected.includes(option)} onChange={()=>toggle(option)} className="h-4 w-4 accent-cyan-400"/><span>{option}</span></label>)}
     </div>
   </details>
@@ -775,7 +836,14 @@ function RarityBadge({ rarityKey, label }: { rarityKey:RarityKey; label:string }
 
 function PerformanceDetails({ record, conditions, defs, hasBoxScore, onOpenBoxScore, onClose }: { record: GameRecord; conditions: StatCondition[]; defs: { key:string; label:string; section?:string }[]; hasBoxScore:boolean; onOpenBoxScore:()=>void; onClose:()=>void }) {
   const scope=record.scope ?? 'Game'
-  const statEntries=Object.entries(record.stats).map(([key,value])=>({key,value,label:defs.find(d=>d.key===key)?.label ?? formatStatKey(key)})).sort((a,b)=>a.label.localeCompare(b.label))
+  const statEntries=Object.entries(record.stats)
+  .filter(([key]) => defs.some(d => d.key === key))
+  .map(([key,value])=>({
+    key,
+    value,
+    label:defs.find(d=>d.key===key)?.label ?? formatStatKey(key),
+  }))
+  .sort((a,b)=>a.label.localeCompare(b.label))
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 p-0 backdrop-blur-sm md:items-center md:p-6" onMouseDown={onClose}><section className="max-h-[94dvh] w-full overflow-y-auto rounded-t-3xl border border-white/10 bg-[#0b1424] p-5 shadow-2xl md:max-w-3xl md:rounded-3xl md:p-7" onMouseDown={e=>e.stopPropagation()} role="dialog" aria-modal="true">
     <div className="flex items-start justify-between gap-4"><div><div className="text-xs font-bold uppercase tracking-[.2em] text-cyan-300">{scope} Performance Details</div><h2 className="mt-2 text-2xl font-black md:text-3xl">{record.entityName}</h2><p className="mt-1 text-sm text-slate-400">{record.sport} • {record.searchType} • {scope}</p></div><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/5 text-xl text-slate-400 hover:bg-white/10">×</button></div>
     {scope==='Game'?<div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><DetailTile label="Matchup" value={`${record.team} vs ${record.opponent}`} /><DetailTile label="Date" value={record.date} />{record.careerYear&&<DetailTile label="Career Year" value={String(record.careerYear)}/>}<DetailTile label="Season Type" value={record.gameStage} /><DetailTile label="Location" value={record.homeAway} /><DetailTile label="Final" value={`${record.result} • ${record.finalScore}`} /></div>:<div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><DetailTile label={scope==='Season'?'Season':'Career Span'} value={record.season}/>{record.careerYear&&<DetailTile label="Career Year" value={String(record.careerYear)}/>}<DetailTile label="Team(s)" value={record.team}/><DetailTile label="Games" value={String(record.gamesPlayed ?? record.stats.gamesPlayed ?? '—')}/><DetailTile label="Competition" value={record.stageLabel ?? record.gameStage}/></div>}
