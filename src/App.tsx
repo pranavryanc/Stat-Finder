@@ -21,6 +21,8 @@ type SeasonOperator = 'Any' | 'Exactly' | 'Before' | 'After' | 'Between'
 type ResultFilter = 'Any' | 'W' | 'L' | 'D'
 type SortDirection = 'asc' | 'desc'
 type CalendarFilter = 'Any' | string
+type NflReceptionScoring = 'PPR' | 'Half-PPR' | 'Standard'
+type NflPassingTdPoints = 4 | 6
 type AppPage = 'finder' | 'explore' | 'history' | 'qa'
 const PAGE_SIZE = 50
 
@@ -46,6 +48,19 @@ function formatMonthDay(value: string) {
 function seasonStart(season: string) {
   const match = season.match(/\d{4}/)
   return match ? Number(match[0]) : 0
+}
+
+
+function nflFantasyKey(mode: NflReceptionScoring, passTdPoints: NflPassingTdPoints, perGame = false) {
+  const prefix = mode === 'PPR' ? 'fantasyPointsPpr' : mode === 'Half-PPR' ? 'fantasyPointsHalfPpr' : 'fantasyPointsStandard'
+  return `${prefix}${passTdPoints}${perGame ? 'PerGame' : ''}`
+}
+
+function nflFantasySettingsFromKey(key: string): { mode: NflReceptionScoring; passTdPoints: NflPassingTdPoints } | null {
+  if (!key.startsWith('fantasyPoints')) return null
+  const mode: NflReceptionScoring = key.includes('HalfPpr') ? 'Half-PPR' : key.includes('Ppr') ? 'PPR' : key.includes('Standard') ? 'Standard' : 'PPR'
+  const passTdPoints: NflPassingTdPoints = key.includes('6') ? 6 : 4
+  return { mode, passTdPoints }
 }
 
 function prioritizeNflDefinitions<T extends {section:string}>(defs:T[], position:string){
@@ -86,6 +101,8 @@ export default function App() {
   const [specificDateFilter, setSpecificDateFilter] = useState('')
   const [playoffRoundFilter, setPlayoffRoundFilter] = useState('Any')
   const [nflPeriodFilter, setNflPeriodFilter] = useState('Any')
+  const [nflReceptionScoring, setNflReceptionScoring] = useState<NflReceptionScoring>('PPR')
+  const [nflPassingTdPoints, setNflPassingTdPoints] = useState<NflPassingTdPoints>(4)
   const [sortBy, setSortBy] = useState('date')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [page, setPage] = useState(0)
@@ -104,7 +121,7 @@ export default function App() {
   const resultsRef = useRef<HTMLElement | null>(null)
   const searchButtonRef = useRef<HTMLButtonElement | null>(null)
 
-  const rawDefs = searchScope === 'Game'
+  const baseRawDefs = searchScope === 'Game'
     ? statDefinitions[sport][searchType]
     : sport === 'NBA'
       ? searchType === 'Team' && searchScope === 'Career'
@@ -117,6 +134,14 @@ export default function App() {
             ? nflAggregateStatDefinitions.Career.Team
             : nflAggregateStatDefinitions.Season?.Team) ?? [])
         : (nflAggregateStatDefinitions[searchScope]?.[searchType] ?? [])
+  const rawDefs = useMemo(() => {
+    if (sport !== 'NFL' || searchType !== 'Player') return baseRawDefs
+    const totalKey = nflFantasyKey(nflReceptionScoring, nflPassingTdPoints)
+    const perGameKey = nflFantasyKey(nflReceptionScoring, nflPassingTdPoints, true)
+    return baseRawDefs
+      .filter(def => !def.key.startsWith('fantasyPoints') || def.key === totalKey || def.key === perGameKey)
+      .map(def => def.key === totalKey ? {...def,label:'Fantasy Points'} : def.key === perGameKey ? {...def,label:'Fantasy Points Per Game'} : def)
+  }, [baseRawDefs, sport, searchType, nflReceptionScoring, nflPassingTdPoints])
   const defs = useMemo(() => sport==='NFL'&&searchType==='Player' ? prioritizeNflDefinitions(rawDefs,positionFilter) : rawDefs, [rawDefs,sport,searchType,positionFilter])
   const grouped = useMemo(
     () => Object.entries(defs.reduce<Record<string, typeof defs>>((acc, d) => {
@@ -220,6 +245,8 @@ export default function App() {
     setSpecificDateFilter('')
     setPlayoffRoundFilter('Any')
     setNflPeriodFilter('Any')
+    setNflReceptionScoring('PPR')
+    setNflPassingTdPoints(4)
     setSortBy('date')
     setSortDirection('desc')
     setPage(0)
@@ -250,6 +277,24 @@ export default function App() {
     )
     setSortDirection('desc'); setPage(0); setTotalResults(0); setResults(null); setNbaClosest([]); setNbaCoverage(null); setSelectedPerformance(null); setSelectedBoxScore(null)
     if (nextScope !== 'Game') setGameStage('Regular Season')
+  }
+
+  const updateNflFantasyScoring = (mode: NflReceptionScoring, passTdPoints: NflPassingTdPoints) => {
+    const oldTotalKey = nflFantasyKey(nflReceptionScoring, nflPassingTdPoints)
+    const oldPerGameKey = nflFantasyKey(nflReceptionScoring, nflPassingTdPoints, true)
+    const newTotalKey = nflFantasyKey(mode, passTdPoints)
+    const newPerGameKey = nflFantasyKey(mode, passTdPoints, true)
+    setConditions(prev => prev.map(condition => condition.statistic === oldTotalKey
+      ? {...condition, statistic:newTotalKey}
+      : condition.statistic === oldPerGameKey
+        ? {...condition, statistic:newPerGameKey}
+        : condition))
+    setSortBy(prev => prev === oldTotalKey ? newTotalKey : prev === oldPerGameKey ? newPerGameKey : prev)
+    setNflReceptionScoring(mode)
+    setNflPassingTdPoints(passTdPoints)
+    setResults(null)
+    setTotalResults(0)
+    setPage(0)
   }
 
   const updateCondition = (next: StatCondition) =>
@@ -303,6 +348,8 @@ export default function App() {
       specificDate: specificDateFilter,
       playoffRound: playoffRoundFilter,
       periodFilter: nflPeriodFilter,
+      nflReceptionScoring,
+      nflPassingTdPoints,
       sortBy,
       sortDirection,
       totalResults: total,
@@ -442,6 +489,9 @@ export default function App() {
     setSpecificDateFilter(entry.specificDate)
     setPlayoffRoundFilter(entry.playoffRound ?? 'Any')
     setNflPeriodFilter(entry.periodFilter ?? 'Any')
+    const savedFantasy = entry.conditions.map(condition => nflFantasySettingsFromKey(condition.statistic)).find(Boolean)
+    setNflReceptionScoring(entry.nflReceptionScoring ?? savedFantasy?.mode ?? 'PPR')
+    setNflPassingTdPoints(entry.nflPassingTdPoints ?? savedFantasy?.passTdPoints ?? 4)
     setSortBy(entry.sortBy)
     setSortDirection(entry.sortDirection)
     setPageView('finder')
@@ -518,7 +568,7 @@ export default function App() {
             <div className="mb-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-bold">Stat Filters</h2><p className="mt-1 text-sm text-slate-500">Only filters changed from “Any” are included.</p></div><button onClick={clear} className="self-start rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-white/10 hover:text-white sm:bg-transparent sm:px-0 sm:py-0">Reset Filters</button></div>
             <button type="button" onClick={() => searchButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/20 bg-cyan-400/[.07] px-4 py-3 text-sm font-black text-cyan-200 transition hover:bg-cyan-400/[.12] sm:w-auto">↓ Go to Search</button>
             {sport==='NFL'&&searchType==='Player'&&positionFilter!=='Any'&&<div className="mt-4 rounded-xl border border-cyan-400/10 bg-cyan-400/[.04] px-3 py-2 text-xs text-slate-500">Showing all NFL player stats; sections most relevant to <span className="font-bold text-cyan-300">{positionFilter.replaceAll('||', ', ')}</span> are listed first.</div>}
-            {grouped.map(([section, sectionDefs]) => <details key={`${sport}-${searchType}-${searchScope}-${section}`} className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/10"><summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>{section}</span><span className="text-base text-slate-500">⌄</span></span></summary><div className="border-t border-white/8 px-4">{sectionDefs.map(def => <StatRow key={def.key} definition={def} condition={currentConditions.find(c => c.statistic === def.key)!} onChange={updateCondition} />)}</div></details>)}
+            {grouped.map(([section, sectionDefs]) => <details key={`${sport}-${searchType}-${searchScope}-${section}`} className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/10"><summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>{section}</span><span className="text-base text-slate-500">⌄</span></span></summary><div className="border-t border-white/8 px-4">{section==='Fantasy'&&sport==='NFL'&&searchType==='Player'&&<div className="grid gap-3 border-b border-white/7 py-4 md:grid-cols-2"><label className="text-xs font-bold uppercase tracking-widest text-slate-500">Scoring Mode<select value={nflReceptionScoring} onChange={e=>updateNflFantasyScoring(e.target.value as NflReceptionScoring,nflPassingTdPoints)} className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base font-medium normal-case tracking-normal text-slate-100 outline-none focus:border-cyan-400/60 md:text-sm"><option value="PPR">PPR (1 pt/reception)</option><option value="Half-PPR">0.5 PPR (0.5 pt/reception)</option><option value="Standard">Standard (0 pt/reception)</option></select></label><label className="text-xs font-bold uppercase tracking-widest text-slate-500">Passing TD<select value={nflPassingTdPoints} onChange={e=>updateNflFantasyScoring(nflReceptionScoring,Number(e.target.value) as NflPassingTdPoints)} className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base font-medium normal-case tracking-normal text-slate-100 outline-none focus:border-cyan-400/60 md:text-sm"><option value={4}>4 points</option><option value={6}>6 points</option></select></label><p className="md:col-span-2 text-xs leading-5 text-slate-500">Also uses 1 point per 25 passing yards, −2 per interception, 1 point per 10 rushing/receiving yards, and 6 per rushing/receiving TD.</p></div>}{sectionDefs.map(def => <StatRow key={def.key} definition={def} condition={currentConditions.find(c => c.statistic === def.key)!} onChange={updateCondition} />)}</div></details>)}
 
             <details className="relative z-20 mt-4 rounded-xl border border-white/10 bg-black/10">
               <summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>Additional Filters</span><span className="text-base text-slate-500">⌄</span></span></summary>

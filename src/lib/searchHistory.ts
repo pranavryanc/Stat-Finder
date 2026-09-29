@@ -26,6 +26,8 @@ export type SearchHistoryEntry = {
   specificDate: string
   playoffRound?: string
   periodFilter?: string
+  nflReceptionScoring?: 'PPR' | 'Half-PPR' | 'Standard'
+  nflPassingTdPoints?: 4 | 6
   sortBy: string
   sortDirection: 'asc' | 'desc'
   totalResults: number
