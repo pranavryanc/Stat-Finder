@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getNbaQa, type NbaQaReport } from '../services/nbaApi'
+import { getWnbaQa, type WnbaQaReport } from '../services/wnbaApi'
 import { getNflQa, type NflQaReport } from '../services/nflApi'
 
 function Metric({
@@ -33,8 +34,9 @@ function Metric({
 }
 
 export function DataQaPage() {
-  const [league, setLeague] = useState<'NBA' | 'NFL'>('NBA')
+  const [league, setLeague] = useState<'NBA' | 'WNBA' | 'NFL'>('NBA')
   const [nba, setNba] = useState<NbaQaReport | null>(null)
+  const [wnba, setWnba] = useState<WnbaQaReport | null>(null)
   const [nfl, setNfl] = useState<NflQaReport | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -46,7 +48,9 @@ export function DataQaPage() {
     const task =
       league === 'NBA'
         ? getNbaQa().then(setNba)
-        : getNflQa().then(setNfl)
+        : league === 'WNBA'
+          ? getWnbaQa().then(setWnba)
+          : getNflQa().then(setNfl)
 
     task
       .catch(e =>
@@ -92,7 +96,7 @@ export function DataQaPage() {
       </div>
 
       <div className="mb-6 inline-flex rounded-xl border border-white/10 bg-white/[.035] p-1">
-        {(['NBA', 'NFL'] as const).map(x => (
+        {(['NBA', 'WNBA', 'NFL'] as const).map(x => (
           <button
             key={x}
             onClick={() => setLeague(x)}
@@ -114,7 +118,11 @@ export function DataQaPage() {
       )}
 
       {league === 'NBA' && nba && (
-        <NbaReport report={nba} />
+        <BasketballReport report={nba} league="NBA" />
+      )}
+
+      {league === 'WNBA' && wnba && (
+        <BasketballReport report={wnba} league="WNBA" />
       )}
 
       {league === 'NFL' && nfl && (
@@ -124,16 +132,18 @@ export function DataQaPage() {
   )
 }
 
-function NbaReport({
+function BasketballReport({
   report,
+  league,
 }: {
-  report: NbaQaReport
+  report: NbaQaReport | WnbaQaReport
+  league: 'NBA' | 'WNBA'
 }) {
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric
-          label="NBA Games"
+          label={`${league} Games`}
           value={report.overview.games}
         />
 
@@ -253,6 +263,10 @@ function NbaReport({
             ))}
           </div>
         </div>
+      </div>
+
+      <div className="mt-4 text-xs leading-5 text-slate-600">
+        Generated {new Date(report.generatedAt).toLocaleString()}.
       </div>
     </>
   )

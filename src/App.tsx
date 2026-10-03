@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getNbaBoxScore, getNbaMeta, getNbaNearestCalendarDay, searchNba, searchNbaAggregate, type NbaCoverage } from './services/nbaApi'
+import {
+  getWnbaBoxScore,
+  getWnbaMeta,
+  getWnbaNearestCalendarDay,
+  searchWnba,
+  searchWnbaAggregate,
+  type WnbaCoverage,
+} from './services/wnbaApi'
 import { getNflBoxScore, getNflMeta, getNflNearestCalendarDay, searchNfl, searchNflAggregate } from './services/nflApi'
 import { statDefinitions } from './data/statDefinitions'
 import { aggregateStatDefinitions, nflAggregateStatDefinitions } from './data/aggregateStatDefinitions'
@@ -35,7 +43,19 @@ const DAY_OPTIONS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'
 const MONTH_OPTIONS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const DAYS_IN_MONTH = [31,29,31,30,31,30,31,31,30,31,30,31]
 const NBA_PLAYOFF_ROUNDS = [{value:'1',label:'First Round'},{value:'2',label:'Conference Semifinals'},{value:'3',label:'Conference Finals'},{value:'4',label:'NBA Finals'}]
+const WNBA_PLAYOFF_ROUNDS = [
+  { value: 'First Round', label: 'First Round' },
+  { value: 'Second Round', label: 'Second Round (2016–2021)' },
+  { value: 'Semifinals', label: 'Semifinals' },
+  { value: 'Finals', label: 'WNBA Finals' },
+]
 const NFL_PLAYOFF_ROUNDS = ['Wild Card','Divisional','Conference Championship','Super Bowl']
+
+function basketballPlayoffRoundLabel(value: string) {
+  return NBA_PLAYOFF_ROUNDS.find(round => round.value === value)?.label
+    ?? WNBA_PLAYOFF_ROUNDS.find(round => round.value === value)?.label
+    ?? value
+}
 
 function formatMonthDay(value: string) {
   const match = value.match(/^(\d{2})-(\d{2})$/)
@@ -114,16 +134,17 @@ export default function App() {
   const [shareOpen, setShareOpen] = useState(false)
   const [nflMeta, setNflMeta] = useState<{seasons:string[];teams:string[];players:string[];opponents:string[];positions:string[];counts:{games:number;player_games:number;team_games:number};source:string} | null>(null)
   const [nbaMeta, setNbaMeta] = useState<{seasons:string[];teams:string[];players:string[];opponents:string[];positions:string[];counts:{games:number;player_games:number;team_games:number};source:string} | null>(null)
+  const [wnbaMeta, setWnbaMeta] = useState<{seasons:string[];teams:string[];players:string[];opponents:string[];positions:string[];counts:{games:number;player_games:number;team_games:number};source:string} | null>(null)
   const [loading, setLoading] = useState(false)
   const [dataError, setDataError] = useState('')
   const [nbaClosest, setNbaClosest] = useState<ClosestPerformance[]>([])
-  const [nbaCoverage, setNbaCoverage] = useState<NbaCoverage | null>(null)
+  const [nbaCoverage, setNbaCoverage] = useState<NbaCoverage | WnbaCoverage | null>(null)
   const resultsRef = useRef<HTMLElement | null>(null)
   const searchButtonRef = useRef<HTMLButtonElement | null>(null)
 
   const baseRawDefs = searchScope === 'Game'
-    ? statDefinitions[sport][searchType]
-    : sport === 'NBA'
+    ? statDefinitions[sport === 'WNBA' ? 'NBA' : sport][searchType]
+    : sport !== 'NFL'
       ? searchType === 'Team' && searchScope === 'Career'
         ? ((aggregateStatDefinitions.Career?.Team?.length
             ? aggregateStatDefinitions.Career.Team
@@ -154,12 +175,12 @@ export default function App() {
     () => defs.map(d => conditions.find(c => c.statistic === d.key) ?? { statistic: d.key, operator: 'any' as const }),
     [defs, conditions],
   )
-  const activeMeta = sport === 'NBA' ? nbaMeta : nflMeta
+  const activeMeta = sport === 'NBA' ? nbaMeta : sport === 'WNBA' ? wnbaMeta : nflMeta
   const availableSeasons = useMemo(() => activeMeta?.seasons ?? [], [activeMeta])
   const availableTeams = useMemo(() => activeMeta?.teams ?? [], [activeMeta])
   const availableOpponents = useMemo(() => activeMeta?.opponents ?? [], [activeMeta])
   const availablePlayers = useMemo(() => activeMeta?.players ?? [], [activeMeta])
-  const availablePositions = useMemo(() => sport === 'NBA' ? ['Guard','Forward','Center'] : (activeMeta?.positions ?? []), [activeMeta, sport])
+  const availablePositions = useMemo(() => sport !== 'NFL' ? ['Guard','Forward','Center'] : (activeMeta?.positions ?? []), [activeMeta, sport])
   const activeConditions = currentConditions.filter(c => c.operator !== 'any')
   const hasStatConditions = activeConditions.length > 0
   const sortOptions = useMemo(() => [
@@ -183,7 +204,7 @@ export default function App() {
     if(seasonOperator!=='Any') filters.push(`Season ${seasonOperator} ${seasonValue}${seasonOperator==='Between'?`–${seasonSecondValue}`:''}`)
     if(searchType==='Player'&&careerYearOperator!=='Any') filters.push(`Career Year ${careerYearOperator} ${careerYearValue}${careerYearOperator==='Between'?`–${careerYearSecondValue}`:''}`)
     if(specificDateFilter) filters.push(`Date: ${formatMonthDay(specificDateFilter)}`)
-    if(sport==='NBA'&&playoffRoundFilter!=='Any') filters.push(`Playoff Round: ${NBA_PLAYOFF_ROUNDS.find(r=>r.value===playoffRoundFilter)?.label ?? playoffRoundFilter}`)
+    if((sport==='NBA'||sport==='WNBA')&&playoffRoundFilter!=='Any') filters.push(`Playoff Round: ${basketballPlayoffRoundLabel(playoffRoundFilter)}`)
     if(sport==='NFL'&&nflPeriodFilter!=='Any') filters.push(nflPeriodFilter)
     else { if(monthFilter!=='Any') filters.push(`Month: ${MONTH_OPTIONS[Number(monthFilter)-1]}`); if(dayOfWeekFilter!=='Any') filters.push(`Day: ${DAY_OPTIONS[Number(dayOfWeekFilter)]}`) }
     if(playerFilter!=='Any'&&searchType==='Player') filters.push(`Player: ${playerFilter.replaceAll('||', ', ')}`)
@@ -198,6 +219,11 @@ export default function App() {
   useEffect(() => {
     if (sport !== 'NBA') return
     getNbaMeta().then(meta => { setNbaMeta(meta); setDataError('') }).catch(error => setDataError(error instanceof Error ? error.message : 'NBA database unavailable'))
+  }, [sport])
+
+  useEffect(() => {
+    if (sport !== 'WNBA') return
+    getWnbaMeta().then(meta => { setWnbaMeta(meta); setDataError('') }).catch(error => setDataError(error instanceof Error ? error.message : 'WNBA database unavailable'))
   }, [sport])
 
   useEffect(() => {
@@ -370,7 +396,9 @@ export default function App() {
       const commonAggregatePayload={ scope:searchScope as Exclude<SearchScope,'Game'>, searchType, gameStage, seasonOperator, seasonValue, seasonSecondValue, careerYearOperator, careerYearValue, careerYearSecondValue, team:teamFilter, player:searchType==='Player'?playerFilter:'Any', position:searchType==='Player'?positionFilter:'Any', dayOfWeek:dayOfWeekFilter, month:monthFilter, specificDate:specificDateFilter, playoffRound:playoffRoundFilter, periodFilter:nflPeriodFilter, conditions:currentConditions, limit:PAGE_SIZE, offset:nextPage*PAGE_SIZE, sortBy:nextSortBy, sortDirection:nextSortDirection }
       const response = sport === 'NBA'
         ? (searchScope === 'Game' ? await searchNba(commonGamePayload) : await searchNbaAggregate(commonAggregatePayload))
-        : (searchScope === 'Game' ? await searchNfl(commonGamePayload) : await searchNflAggregate(commonAggregatePayload))
+        : sport === 'WNBA'
+          ? (searchScope === 'Game' ? await searchWnba(commonGamePayload) : await searchWnbaAggregate(commonAggregatePayload))
+          : (searchScope === 'Game' ? await searchNfl(commonGamePayload) : await searchNflAggregate(commonAggregatePayload))
       setResults(response.records)
       setTotalResults(response.total)
       setNbaClosest(response.closest ?? [])
@@ -451,21 +479,42 @@ export default function App() {
     if (record.scope && record.scope !== 'Game') return
     try {
       setDataError('')
-      const boxScore = record.sport === 'NBA' ? await getNbaBoxScore(record.gameId) : await getNflBoxScore(record.gameId)
+      const boxScore = record.sport === 'NBA' ? await getNbaBoxScore(record.gameId) : record.sport === 'WNBA' ? await getWnbaBoxScore(record.gameId) : await getNflBoxScore(record.gameId)
       setSelectedBoxScore(boxScore)
     } catch (error) { setDataError(error instanceof Error ? error.message : 'Box score lookup failed') }
   }
 
 
-  const applyExploreSearch = (search: ExploreSearch) => {
-    updateMode(search.sport, search.searchType)
+  const applyExploreSearch = (search: ExploreSearch, selectedSport: Sport) => {
+    updateMode(selectedSport, search.searchType)
     setSearchScope('Game')
     setConditions(search.conditions.map(condition => ({ ...condition })))
     setGameStage(search.gameStage ?? 'Any')
     setMonthFilter(search.month ?? 'Any')
     setSpecificDateFilter(search.specificDate ?? '')
     setPageView('finder')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+
+    const firstStatistic = search.conditions.find(condition => condition.operator !== 'any')?.statistic
+
+    window.setTimeout(() => {
+      if (firstStatistic) {
+        const target = Array.from(
+          document.querySelectorAll<HTMLDetailsElement>('details[data-statistics]'),
+        ).find(details =>
+          (details.dataset.statistics ?? '').split('||').includes(firstStatistic),
+        )
+
+        if (target) {
+          target.open = true
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          return
+        }
+      }
+
+      document
+        .querySelector<HTMLElement>('[data-stat-filters]')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 0)
   }
 
   const applyHistorySearch = (entry: SearchHistoryEntry, rerun = true) => {
@@ -533,13 +582,13 @@ export default function App() {
       <main className="mx-auto max-w-7xl px-3 py-5 sm:px-4 sm:py-7 md:px-6 md:py-10">
         {pageView === 'explore' ? <ExplorePage onTrySearch={applyExploreSearch} /> : pageView === 'history' ? <HistoryPage entries={searchHistory} onRerun={entry=>applyHistorySearch(entry,true)} onEdit={entry=>applyHistorySearch(entry,false)} onDelete={deleteHistoryEntry} onClear={clearSearchHistory} onExplore={()=>setPageView('explore')} /> : pageView === 'qa' ? <DataQaPage /> : <>
         <div className="mb-6 max-w-3xl md:mb-8">
-          <div className="mb-3 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/8 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-cyan-300">Real NBA + NFL Data</div>
+          <div className="mb-3 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/8 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-cyan-300">Real NBA + WNBA + NFL Data</div>
           <h1 className="text-3xl font-black leading-tight tracking-tight sm:text-4xl md:text-5xl">Has anyone ever done <span className="text-cyan-300">this?</span></h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 md:text-base">Build custom statistical combinations and search NBA and NFL history across games, seasons, and careers. Explore player and team performances across the full history of both leagues.</p>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 md:text-base">Build custom statistical combinations and search NBA, WNBA, and NFL history across games, seasons, and careers. Explore player and team performances across the available history of all three leagues.</p>
         </div>
 
         <section className="mb-5 grid gap-4 rounded-2xl border border-white/10 bg-white/[.035] p-4 shadow-2xl shadow-black/20 md:grid-cols-2 md:p-5">
-          <div><div className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-500">Sport</div><div className="grid grid-cols-2 gap-2">{(['NBA', 'NFL'] as Sport[]).map(x => <button key={x} onClick={() => updateMode(x, searchType)} className={pill(sport === x)}>{x}</button>)}</div></div>
+          <div><div className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-500">Sport</div><div className="grid grid-cols-3 gap-2">{(['NBA', 'WNBA', 'NFL'] as Sport[]).map(x => <button key={x} onClick={() => updateMode(x, searchType)} className={pill(sport === x)}>{x}</button>)}</div></div>
           <div><div className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-500">Search Type</div><div className="grid grid-cols-2 gap-2">{(['Player', 'Team'] as SearchType[]).map(x => <button key={x} onClick={() => updateMode(sport, x)} className={pill(searchType === x)}>{x}</button>)}</div></div>
         </section>
 
@@ -564,11 +613,11 @@ export default function App() {
         </section>
 
         <div className="grid min-w-0 gap-4 md:gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <section className="min-w-0 rounded-2xl border border-white/10 bg-white/[.035] p-4 md:p-5">
+          <section data-stat-filters className="min-w-0 rounded-2xl border border-white/10 bg-white/[.035] p-4 md:p-5">
             <div className="mb-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-bold">Stat Filters</h2><p className="mt-1 text-sm text-slate-500">Only filters changed from “Any” are included.</p></div><button onClick={clear} className="self-start rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-white/10 hover:text-white sm:bg-transparent sm:px-0 sm:py-0">Reset Filters</button></div>
             <button type="button" onClick={() => searchButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/20 bg-cyan-400/[.07] px-4 py-3 text-sm font-black text-cyan-200 transition hover:bg-cyan-400/[.12] sm:w-auto">↓ Go to Search</button>
             {sport==='NFL'&&searchType==='Player'&&positionFilter!=='Any'&&<div className="mt-4 rounded-xl border border-cyan-400/10 bg-cyan-400/[.04] px-3 py-2 text-xs text-slate-500">Showing all NFL player stats; sections most relevant to <span className="font-bold text-cyan-300">{positionFilter.replaceAll('||', ', ')}</span> are listed first.</div>}
-            {grouped.map(([section, sectionDefs]) => <details key={`${sport}-${searchType}-${searchScope}-${section}`} className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/10"><summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>{section}</span><span className="text-base text-slate-500">⌄</span></span></summary><div className="border-t border-white/8 px-4">{section==='Fantasy'&&sport==='NFL'&&searchType==='Player'&&<div className="grid gap-3 border-b border-white/7 py-4 md:grid-cols-2"><label className="text-xs font-bold uppercase tracking-widest text-slate-500">Scoring Mode<select value={nflReceptionScoring} onChange={e=>updateNflFantasyScoring(e.target.value as NflReceptionScoring,nflPassingTdPoints)} className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base font-medium normal-case tracking-normal text-slate-100 outline-none focus:border-cyan-400/60 md:text-sm"><option value="PPR">PPR (1 pt/reception)</option><option value="Half-PPR">0.5 PPR (0.5 pt/reception)</option><option value="Standard">Standard (0 pt/reception)</option></select></label><label className="text-xs font-bold uppercase tracking-widest text-slate-500">Passing TD<select value={nflPassingTdPoints} onChange={e=>updateNflFantasyScoring(nflReceptionScoring,Number(e.target.value) as NflPassingTdPoints)} className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base font-medium normal-case tracking-normal text-slate-100 outline-none focus:border-cyan-400/60 md:text-sm"><option value={4}>4 points</option><option value={6}>6 points</option></select></label><p className="md:col-span-2 text-xs leading-5 text-slate-500">Also uses 1 point per 25 passing yards, −2 per interception, 1 point per 10 rushing/receiving yards, and 6 per rushing/receiving TD.</p></div>}{sectionDefs.map(def => <StatRow key={def.key} definition={def} condition={currentConditions.find(c => c.statistic === def.key)!} onChange={updateCondition} />)}</div></details>)}
+            {grouped.map(([section, sectionDefs]) => <details key={`${sport}-${searchType}-${searchScope}-${section}`} data-stat-section={section} data-statistics={sectionDefs.map(def => def.key).join('||')} className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black/10"><summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>{section}</span><span className="text-base text-slate-500">⌄</span></span></summary><div className="border-t border-white/8 px-4">{section==='Fantasy'&&sport==='NFL'&&searchType==='Player'&&<div className="grid gap-3 border-b border-white/7 py-4 md:grid-cols-2"><label className="text-xs font-bold uppercase tracking-widest text-slate-500">Scoring Mode<select value={nflReceptionScoring} onChange={e=>updateNflFantasyScoring(e.target.value as NflReceptionScoring,nflPassingTdPoints)} className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base font-medium normal-case tracking-normal text-slate-100 outline-none focus:border-cyan-400/60 md:text-sm"><option value="PPR">PPR (1 pt/reception)</option><option value="Half-PPR">0.5 PPR (0.5 pt/reception)</option><option value="Standard">Standard (0 pt/reception)</option></select></label><label className="text-xs font-bold uppercase tracking-widest text-slate-500">Passing TD<select value={nflPassingTdPoints} onChange={e=>updateNflFantasyScoring(nflReceptionScoring,Number(e.target.value) as NflPassingTdPoints)} className="mt-2 min-h-11 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 text-base font-medium normal-case tracking-normal text-slate-100 outline-none focus:border-cyan-400/60 md:text-sm"><option value={4}>4 points</option><option value={6}>6 points</option></select></label><p className="md:col-span-2 text-xs leading-5 text-slate-500">Also uses 1 point per 25 passing yards, −2 per interception, 1 point per 10 rushing/receiving yards, and 6 per rushing/receiving TD.</p></div>}{sectionDefs.map(def => <StatRow key={def.key} definition={def} condition={currentConditions.find(c => c.statistic === def.key)!} onChange={updateCondition} />)}</div></details>)}
 
             <details className="relative z-20 mt-4 rounded-xl border border-white/10 bg-black/10">
               <summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold uppercase tracking-[.18em] text-cyan-300/80 marker:hidden"><span className="flex items-center justify-between"><span>Additional Filters</span><span className="text-base text-slate-500">⌄</span></span></summary>
@@ -587,10 +636,10 @@ export default function App() {
                   </select>
                 </div>}
 
-                {sport==='NBA' && <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
+                {(sport==='NBA' || sport==='WNBA') && <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
                   <div><div className="font-semibold">Playoff Round</div><div className="mt-1 text-xs text-slate-500">Filter postseason games to a specific round</div></div>
                   <select disabled={gameStage!=='Playoffs'} value={playoffRoundFilter} onChange={e=>setPlayoffRoundFilter(e.target.value)} className="w-full rounded-xl border border-white/10 bg-[#0b1424] px-3 py-3 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-40">
-                    <option value="Any">Any playoff round</option>{NBA_PLAYOFF_ROUNDS.map(round=><option key={round.value} value={round.value}>{round.label}</option>)}
+                    <option value="Any">Any playoff round</option>{(sport==='NBA' ? NBA_PLAYOFF_ROUNDS : WNBA_PLAYOFF_ROUNDS).map(round=><option key={round.value} value={round.value}>{round.label}</option>)}
                   </select>
                 </div>}
 
@@ -665,7 +714,7 @@ export default function App() {
                 </>}
 
                 {searchType === 'Player' && <div className="grid gap-3 md:grid-cols-[220px_1fr] md:items-center">
-                  <div><div className="font-semibold">Position</div><div className="mt-1 text-xs text-slate-500">NBA uses normalized Guard / Forward / Center groups; NFL uses recorded positions and prioritizes the most relevant stat sections</div></div>
+                  <div><div className="font-semibold">Position</div><div className="mt-1 text-xs text-slate-500">NBA and WNBA use normalized Guard / Forward / Center groups; NFL uses recorded positions and prioritizes the most relevant stat sections</div></div>
                   <MultiSelectFilter value={positionFilter} onChange={setPositionFilter} options={availablePositions} placeholder="Any position" />
                 </div>}
 
@@ -680,7 +729,7 @@ export default function App() {
               </div>
             </details>
 
-            <button ref={searchButtonRef} disabled={loading || (sport === 'NBA' && !nbaMeta)} onClick={runSearch} className="mt-5 w-full rounded-xl bg-cyan-400 px-4 py-3.5 font-black text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'SEARCHING…' : hasStatConditions ? `SEARCH ${searchScope.toUpperCase()} PERFORMANCES` : `SEARCH ALL ${searchScope.toUpperCase()} PERFORMANCES`}</button>
+            <button ref={searchButtonRef} disabled={loading || (sport === 'NBA' && !nbaMeta) || (sport === 'WNBA' && !wnbaMeta) || (sport === 'NFL' && !nflMeta)} onClick={runSearch} className="mt-5 w-full rounded-xl bg-cyan-400 px-4 py-3.5 font-black text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'SEARCHING…' : hasStatConditions ? `SEARCH ${searchScope.toUpperCase()} PERFORMANCES` : `SEARCH ALL ${searchScope.toUpperCase()} PERFORMANCES`}</button>
           </section>
 
           <aside className="min-w-0 space-y-5"><div className="rounded-2xl border border-white/10 bg-white/[.035] p-4 sm:p-5 lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto lg:overscroll-contain">
@@ -692,24 +741,24 @@ export default function App() {
               <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Day</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{dayOfWeekFilter === 'Any' ? 'Any' : DAY_OPTIONS[Number(dayOfWeekFilter)]}</span></div>
               <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Month</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{monthFilter === 'Any' ? 'Any' : MONTH_OPTIONS[Number(monthFilter)-1]}</span></div>
               <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Specific Date</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{formatMonthDay(specificDateFilter)}</span></div>
-              {sport==='NBA'&&<div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Playoff Round</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{playoffRoundFilter==='Any'?'Any':NBA_PLAYOFF_ROUNDS.find(r=>r.value===playoffRoundFilter)?.label}</span></div>}
+              {(sport==='NBA'||sport==='WNBA')&&<div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Playoff Round</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{playoffRoundFilter==='Any'?'Any':basketballPlayoffRoundLabel(playoffRoundFilter)}</span></div>}
               {sport==='NFL'&&<div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Week / Round</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{nflPeriodFilter}</span></div>}
               <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Team</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{teamFilter.replaceAll('\|\|', ', ')}</span></div>
               {searchType === 'Player' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Player</span><span className="float-right ml-3 max-w-[58%] truncate text-right font-bold text-cyan-300">{playerFilter.replaceAll('\|\|', ', ')}</span></div>}
               {searchScope === 'Game' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Opponent</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{opponentFilter.replaceAll('\|\|', ', ')}</span></div>}
               {searchType === 'Player' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Position</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{positionFilter.replaceAll('\|\|', ', ')}</span></div>}
               {searchScope === 'Game' && <div className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">Result</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{resultFilter === 'Any' ? 'Any' : resultFilter === 'W' ? 'Win' : resultFilter === 'L' ? 'Loss' : 'Draw'}</span></div>}
-              {sport === 'NBA' && nbaCoverage && <div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.05] px-3 py-3 text-xs leading-5 text-slate-400"><div className="font-bold text-cyan-300">Effective historical coverage: {nbaCoverage.startSeason} – {nbaCoverage.endSeason}</div><div className="mt-1">{nbaCoverage.message}</div></div>}
+              {sport !== 'NFL' && nbaCoverage && <div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.05] px-3 py-3 text-xs leading-5 text-slate-400"><div className="font-bold text-cyan-300">Effective historical coverage: {nbaCoverage.startSeason} – {nbaCoverage.endSeason}</div><div className="mt-1">{nbaCoverage.message}</div></div>}
             </div>
             <div className="mt-4 space-y-2">{activeConditions.length ? activeConditions.map(c => { const def = defs.find(d => d.key === c.statistic); const op = { gte: '≥', eq: '=', lte: '≤', between: 'between', any: '' }[c.operator]; return <div key={c.statistic} className="rounded-xl bg-black/20 px-3 py-2 text-sm"><span className="text-slate-400">{def?.label}</span><span className="float-right ml-3 max-w-[58%] break-words text-right font-bold text-cyan-300">{op} {c.value}{c.operator === 'between' ? ` – ${c.secondValue ?? '?'}` : ''}</span></div> }) : <div className="rounded-xl border border-dashed border-white/10 px-3 py-5 text-center text-sm text-slate-500">No active stat filters yet. You can search now to browse all performances, then narrow the results with any filter.</div>}</div>
             {dataError && <div className="mt-3 rounded-xl border border-rose-400/20 bg-rose-400/[.06] px-3 py-3 text-xs leading-5 text-rose-200">{dataError}</div>}
-            <div className="mt-4 text-xs leading-5 text-slate-500"><strong className="text-slate-400">Coverage:</strong> {sport === 'NBA' ? (nbaMeta ? `${nbaMeta.seasons.at(-1) ?? '—'} through ${nbaMeta.seasons[0] ?? '—'} • ${nbaMeta.counts.games.toLocaleString()} games • source: ${nbaMeta.source}` : 'Connect and ingest the NBA database to enable real searches.') : nflMeta ? `${nflMeta.seasons.at(-1) ?? '—'} through ${nflMeta.seasons[0] ?? '—'} • ${nflMeta.counts.games.toLocaleString()} games • source: ${nflMeta.source}` : 'Run the NFL schema and ingestion steps to enable real searches.'}</div>
+            <div className="mt-4 text-xs leading-5 text-slate-500"><strong className="text-slate-400">Coverage:</strong> {sport === 'NBA' ? (nbaMeta ? `${nbaMeta.seasons.at(-1) ?? '—'} through ${nbaMeta.seasons[0] ?? '—'} • ${nbaMeta.counts.games.toLocaleString()} games • source: ${nbaMeta.source}` : 'Connect and ingest the NBA database to enable real searches.') : sport === 'WNBA' ? (wnbaMeta ? `${wnbaMeta.seasons.at(-1) ?? '—'} through ${wnbaMeta.seasons[0] ?? '—'} • ${wnbaMeta.counts.games.toLocaleString()} games • source: ${wnbaMeta.source}` : 'Connect and ingest the WNBA database to enable real searches.') : nflMeta ? `${nflMeta.seasons.at(-1) ?? '—'} through ${nflMeta.seasons[0] ?? '—'} • ${nflMeta.counts.games.toLocaleString()} games • source: ${nflMeta.source}` : 'Run the NFL schema and ingestion steps to enable real searches.'}</div>
           </div></aside>
         </div>
 
         {results !== null && <section ref={resultsRef} className="mt-7 scroll-mt-24 rounded-2xl border border-white/10 bg-white/[.035] p-4 md:p-6">
           {results.length > 0 ? <>
-            <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-xs font-bold uppercase tracking-widest text-cyan-300">{hasStatConditions?'Search Results':'Browse Results'}</div><div className="mt-1 flex flex-wrap items-center gap-3"><h2 className="text-2xl font-black sm:text-3xl">{totalResults.toLocaleString()} {totalResults === 1 ? searchScope : `${searchScope} Performances`} Found</h2>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div>{!hasStatConditions&&<p className="mt-2 text-sm text-slate-500">Showing all performances that match the selected non-stat filters. Add a stat condition anytime to calculate rarity.</p>}{nbaCoverage && <p className="mt-2 text-sm text-slate-500">Historical coverage for this search: <span className="font-bold text-slate-300">{nbaCoverage.startSeason} – {nbaCoverage.endSeason}</span>.</p>}</div><div className="flex w-full flex-wrap items-center gap-2 sm:w-auto"><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-cyan-400/20 bg-cyan-400/[.07] px-3 py-2 text-xs font-black text-cyan-200 hover:bg-cyan-400/[.12]">Share Result</button><div className="max-w-full rounded-full bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-slate-400 sm:text-xs">{sport === 'NBA' ? 'NBA Stats database' : 'Historical NFL + nflverse database'}</div></div></div>
+            <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-xs font-bold uppercase tracking-widest text-cyan-300">{hasStatConditions?'Search Results':'Browse Results'}</div><div className="mt-1 flex flex-wrap items-center gap-3"><h2 className="text-2xl font-black sm:text-3xl">{totalResults.toLocaleString()} {totalResults === 1 ? searchScope : `${searchScope} Performances`} Found</h2>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div>{!hasStatConditions&&<p className="mt-2 text-sm text-slate-500">Showing all performances that match the selected non-stat filters. Add a stat condition anytime to calculate rarity.</p>}{nbaCoverage && <p className="mt-2 text-sm text-slate-500">Historical coverage for this search: <span className="font-bold text-slate-300">{nbaCoverage.startSeason} – {nbaCoverage.endSeason}</span>.</p>}</div><div className="flex w-full flex-wrap items-center gap-2 sm:w-auto"><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-cyan-400/20 bg-cyan-400/[.07] px-3 py-2 text-xs font-black text-cyan-200 hover:bg-cyan-400/[.12]">Share Result</button><div className="max-w-full rounded-full bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-slate-400 sm:text-xs">{sport === 'NBA' ? 'NBA Stats database' : sport === 'WNBA' ? 'WNBA Stats database' : 'Historical NFL + nflverse database'}</div></div></div>
             <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/8 bg-black/20 p-3 sm:flex-row sm:items-end sm:justify-between">
               <div><div className="text-xs font-bold uppercase tracking-wider text-slate-500">Showing</div><div className="mt-1 text-sm font-semibold text-slate-300">{(page*PAGE_SIZE+1).toLocaleString()}–{Math.min((page+1)*PAGE_SIZE,totalResults).toLocaleString()} of {totalResults.toLocaleString()}</div></div>
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -717,13 +766,13 @@ export default function App() {
                 <label className="text-xs font-semibold text-slate-400">Order<select value={sortDirection} onChange={e=>changeSortDirection(e.target.value as SortDirection)} className="mt-1 block rounded-xl border border-white/10 bg-[#0b1424] px-3 py-2.5 text-sm font-semibold text-slate-100 outline-none focus:border-cyan-400/50"><option value="desc">Highest / Newest</option><option value="asc">Lowest / Oldest</option></select></label>
               </div>
             </div>
-            <ActiveFilters conditions={activeConditions} defs={defs} gameStage={gameStage} seasonOperator={seasonOperator} seasonValue={seasonValue} seasonSecondValue={seasonSecondValue} careerYearOperator={searchType==='Player'?careerYearOperator:'Any'} careerYearValue={careerYearValue} careerYearSecondValue={careerYearSecondValue} dayOfWeek={dayOfWeekFilter} month={monthFilter} specificDate={specificDateFilter} playoffRound={sport==='NBA'?playoffRoundFilter:'Any'} periodFilter={sport==='NFL'?nflPeriodFilter:'Any'} team={teamFilter} opponent={opponentFilter} player={searchType==='Player'?playerFilter:'Any'} position={searchType==='Player'?positionFilter:'Any'} result={resultFilter} onClearStat={stat=>setConditions(prev=>prev.filter(c=>c.statistic!==stat))} onClearGameStage={()=>setGameStage('Any')} onClearSeason={()=>{setSeasonOperator('Any');setSeasonValue('');setSeasonSecondValue('')}} onClearCareerYear={()=>{setCareerYearOperator('Any');setCareerYearValue('');setCareerYearSecondValue('')}} onClearDayOfWeek={()=>setDayOfWeekFilter('Any')} onClearMonth={()=>setMonthFilter('Any')} onClearSpecificDate={()=>setSpecificDateFilter('')} onClearPlayoffRound={()=>setPlayoffRoundFilter('Any')} onClearPeriodFilter={()=>setNflPeriodFilter('Any')} onClearTeam={()=>setTeamFilter('Any')} onClearOpponent={()=>setOpponentFilter('Any')} onClearPlayer={()=>setPlayerFilter('Any')} onClearPosition={()=>setPositionFilter('Any')} onClearResult={()=>setResultFilter('Any')} />
+            <ActiveFilters conditions={activeConditions} defs={defs} gameStage={gameStage} seasonOperator={seasonOperator} seasonValue={seasonValue} seasonSecondValue={seasonSecondValue} careerYearOperator={searchType==='Player'?careerYearOperator:'Any'} careerYearValue={careerYearValue} careerYearSecondValue={careerYearSecondValue} dayOfWeek={dayOfWeekFilter} month={monthFilter} specificDate={specificDateFilter} playoffRound={(sport==='NBA'||sport==='WNBA')?playoffRoundFilter:'Any'} periodFilter={sport==='NFL'?nflPeriodFilter:'Any'} team={teamFilter} opponent={opponentFilter} player={searchType==='Player'?playerFilter:'Any'} position={searchType==='Player'?positionFilter:'Any'} result={resultFilter} onClearStat={stat=>setConditions(prev=>prev.filter(c=>c.statistic!==stat))} onClearGameStage={()=>setGameStage('Any')} onClearSeason={()=>{setSeasonOperator('Any');setSeasonValue('');setSeasonSecondValue('')}} onClearCareerYear={()=>{setCareerYearOperator('Any');setCareerYearValue('');setCareerYearSecondValue('')}} onClearDayOfWeek={()=>setDayOfWeekFilter('Any')} onClearMonth={()=>setMonthFilter('Any')} onClearSpecificDate={()=>setSpecificDateFilter('')} onClearPlayoffRound={()=>setPlayoffRoundFilter('Any')} onClearPeriodFilter={()=>setNflPeriodFilter('Any')} onClearTeam={()=>setTeamFilter('Any')} onClearOpponent={()=>setOpponentFilter('Any')} onClearPlayer={()=>setPlayerFilter('Any')} onClearPosition={()=>setPositionFilter('Any')} onClearResult={()=>setResultFilter('Any')} />
             <p className="mt-3 text-sm text-slate-500">Select any performance to view details, then open the full game box score.</p>
             <div className="mt-5 grid gap-3">{results.map(record => <ResultCard key={record.id} record={record} conditions={activeConditions} defs={defs} sortBy={sortBy} sortLabel={sortOptions.find(option => option.value === sortBy)?.label ?? 'Date'} onOpen={setSelectedPerformance} />)}</div>
             {totalResults > PAGE_SIZE && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-5"><button disabled={page===0||loading} onClick={()=>changePage(page-1)} className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-300 disabled:cursor-not-allowed disabled:opacity-35 sm:flex-none">← Previous</button><div className="text-sm font-semibold text-slate-400">Page {page+1} of {Math.ceil(totalResults/PAGE_SIZE).toLocaleString()}</div><button disabled={(page+1)*PAGE_SIZE>=totalResults||loading} onClick={()=>changePage(page+1)} className="flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-300 disabled:cursor-not-allowed disabled:opacity-35 sm:flex-none">Next →</button></div>}
           </> : <>
             {hasStatConditions ? <>
-              <div className="rounded-2xl border border-amber-400/20 bg-amber-300/[.06] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-3"><div className="text-xs font-bold uppercase tracking-[.2em] text-amber-300">Never Done — Within Search Coverage</div>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div><h2 className="mt-2 text-3xl font-black">No exact match</h2></div><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-amber-300/20 bg-amber-300/[.07] px-3 py-2 text-xs font-black text-amber-200 hover:bg-amber-300/[.12]">Share Result</button></div><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">No {searchScope.toLowerCase()} {searchType.toLowerCase()} performance in the {sport === 'NBA' ? `valid historical coverage for this search${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}` : `loaded NFL historical coverage${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}`} satisfies every active condition and game filter.</p></div>
+              <div className="rounded-2xl border border-amber-400/20 bg-amber-300/[.06] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-3"><div className="text-xs font-bold uppercase tracking-[.2em] text-amber-300">Never Done — Within Search Coverage</div>{rarity && <RarityBadge rarityKey={rarity.key} label={rarity.label} />}</div><h2 className="mt-2 text-3xl font-black">No exact match</h2></div><button onClick={()=>setShareOpen(true)} className="rounded-xl border border-amber-300/20 bg-amber-300/[.07] px-3 py-2 text-xs font-black text-amber-200 hover:bg-amber-300/[.12]">Share Result</button></div><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">No {searchScope.toLowerCase()} {searchType.toLowerCase()} performance in the {sport !== 'NFL' ? `valid historical coverage for this search${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}` : `loaded NFL historical coverage${nbaCoverage ? ` (${nbaCoverage.startSeason} – ${nbaCoverage.endSeason})` : ''}`} satisfies every active condition and game filter.</p></div>
               <div className="mt-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-xl font-bold">Closest {searchScope} Performances</h3><p className="mt-1 text-sm text-slate-500">Ranked across the full valid search coverage using stat-normalized distance, so misses are scaled to the statistic rather than treated as equal raw-unit differences.</p></div>{closest[0]&&<div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.06] px-3 py-2 text-xs text-slate-400"><span className="font-black text-cyan-300">Best match: {closest[0].similarity}%</span> • {closest[0].conditionsMet}/{closest[0].conditionCount} conditions met</div>}</div><div className="mt-4 grid gap-3">{closest.map(item => <ResultCard key={item.record.id} record={item.record} conditions={activeConditions} defs={defs} closestInfo={item} sortBy={sortBy} sortLabel={sortOptions.find(option => option.value === sortBy)?.label ?? 'Date'} onOpen={setSelectedPerformance} />)}</div></div>
             </> : <div className="rounded-2xl border border-white/10 bg-white/[.035] p-6 text-center"><div className="text-xs font-bold uppercase tracking-[.18em] text-slate-500">No performances found</div><h2 className="mt-2 text-2xl font-black">No records match these filters</h2><p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-400">There are no {searchScope.toLowerCase()} {searchType.toLowerCase()} performances matching the selected non-stat filters. Clear or broaden a filter and search again.</p></div>}
           </>}
@@ -739,7 +788,7 @@ export default function App() {
 }
 
 
-function ExplorePage({ onTrySearch }: { onTrySearch:(search:ExploreSearch)=>void }) {
+function ExplorePage({ onTrySearch }: { onTrySearch:(search:ExploreSearch, selectedSport:Sport)=>void }) {
   const [category,setCategory]=useState('All')
   const [exploreSport,setExploreSport]=useState<Sport>('NBA')
   const today=new Date()
@@ -750,7 +799,7 @@ function ExplorePage({ onTrySearch }: { onTrySearch:(search:ExploreSearch)=>void
   useEffect(()=>{
     let cancelled=false
     setCalendarDay(null)
-    const loader=exploreSport==='NBA'?getNbaNearestCalendarDay:getNflNearestCalendarDay
+    const loader=exploreSport==='NBA'?getNbaNearestCalendarDay:exploreSport==='WNBA'?getWnbaNearestCalendarDay:getNflNearestCalendarDay
     loader(todayMonth,todayDay)
       .then(value=>{if(!cancelled)setCalendarDay(value)})
       .catch(()=>{if(!cancelled)setCalendarDay({exact:true,month:todayMonth,day:todayDay,distanceDays:0})})
@@ -771,19 +820,19 @@ function ExplorePage({ onTrySearch }: { onTrySearch:(search:ExploreSearch)=>void
   const visible=category==='All'?sportSearches:sportSearches.filter(search=>search.category===category)
 
   const conditionText=(search:ExploreSearch)=>search.conditions.map(condition=>{
-    const def=statDefinitions[search.sport][search.searchType].find(item=>item.key===condition.statistic)
+    const def=statDefinitions[search.sport === 'WNBA' ? 'NBA' : search.sport][search.searchType].find(item=>item.key===condition.statistic)
     const op={gte:'≥',eq:'=',lte:'≤',between:'Between',any:''}[condition.operator]
     return `${def?.label ?? condition.statistic} ${op} ${condition.value ?? ''}${condition.operator==='between'?`–${condition.secondValue ?? ''}`:''}`
   })
 
-  const searchCard=(search:ExploreSearch,featuredCard=false)=><article key={search.id} className={`group flex min-h-64 flex-col rounded-2xl border p-5 transition hover:-translate-y-0.5 ${featuredCard?'border-cyan-300/20 bg-gradient-to-br from-cyan-400/[.09] to-violet-400/[.05] hover:border-cyan-300/35':'border-white/10 bg-white/[.035] hover:border-cyan-400/25 hover:bg-white/[.05]'}`}><div className="flex items-center justify-between gap-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${featuredCard?'bg-cyan-300/15 text-cyan-200':'bg-cyan-400/10 text-cyan-300'}`}>{search.featuredLabel ?? search.category}</span><span className="text-xs font-bold text-slate-500">{search.sport} • {search.searchType}</span></div><h2 className="mt-4 text-xl font-black">{search.title}</h2><p className="mt-2 text-sm leading-6 text-slate-400">{search.description}</p><div className="mt-4 flex flex-wrap gap-1.5">{conditionText(search).map(text=><span key={text} className="rounded-lg bg-black/25 px-2.5 py-1.5 text-xs font-bold text-slate-300">{text}</span>)}{search.gameStage&&<span className="rounded-lg bg-black/25 px-2.5 py-1.5 text-xs font-bold text-slate-300">{search.gameStage}</span>}{search.specificDate&&<span className="rounded-lg bg-black/25 px-2.5 py-1.5 text-xs font-bold text-slate-300">{formatMonthDay(search.specificDate)}</span>}</div><button onClick={()=>onTrySearch(search)} className="mt-auto pt-5 text-left text-sm font-black text-cyan-300 transition group-hover:text-cyan-200">TRY THIS SEARCH →</button></article>
+  const searchCard=(search:ExploreSearch,featuredCard=false)=><article key={search.id} className={`group flex min-h-64 flex-col rounded-2xl border p-5 transition hover:-translate-y-0.5 ${featuredCard?'border-cyan-300/20 bg-gradient-to-br from-cyan-400/[.09] to-violet-400/[.05] hover:border-cyan-300/35':'border-white/10 bg-white/[.035] hover:border-cyan-400/25 hover:bg-white/[.05]'}`}><div className="flex items-center justify-between gap-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-widest ${featuredCard?'bg-cyan-300/15 text-cyan-200':'bg-cyan-400/10 text-cyan-300'}`}>{search.featuredLabel ?? search.category}</span><span className="text-xs font-bold text-slate-500">{search.sport} • {search.searchType}</span></div><h2 className="mt-4 text-xl font-black">{search.title}</h2><p className="mt-2 text-sm leading-6 text-slate-400">{search.description}</p><div className="mt-4 flex flex-wrap gap-1.5">{conditionText(search).map(text=><span key={text} className="rounded-lg bg-black/25 px-2.5 py-1.5 text-xs font-bold text-slate-300">{text}</span>)}{search.gameStage&&<span className="rounded-lg bg-black/25 px-2.5 py-1.5 text-xs font-bold text-slate-300">{search.gameStage}</span>}{search.specificDate&&<span className="rounded-lg bg-black/25 px-2.5 py-1.5 text-xs font-bold text-slate-300">{formatMonthDay(search.specificDate)}</span>}</div><button onClick={()=>onTrySearch(search, exploreSport)} className="mt-auto pt-5 text-left text-sm font-black text-cyan-300 transition group-hover:text-cyan-200">TRY THIS SEARCH →</button></article>
 
-  const databaseName=exploreSport==='NBA'?'NBA':'NFL'
+  const databaseName=exploreSport
   return <section>
     <div className="mb-6 max-w-3xl md:mb-8"><div className="mb-3 inline-flex rounded-full border border-violet-400/20 bg-violet-400/8 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-violet-300">Explore Stat Finder</div><h1 className="text-3xl font-black leading-tight tracking-tight sm:text-4xl md:text-5xl">Start with a fascinating <span className="text-cyan-300">question.</span></h1><p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400 md:text-base">Browse today’s featured searches and curated historical ideas, then load any one into Stat Finder and adjust it however you want. Result counts always come from your database when you press Search.</p></div>
 
     <div className="mb-8 inline-flex rounded-2xl border border-white/10 bg-black/20 p-1.5">
-      {(['NBA','NFL'] as Sport[]).map(item=><button key={item} onClick={()=>setExploreSport(item)} className={`rounded-xl px-5 py-2.5 text-sm font-black transition ${exploreSport===item?'bg-cyan-400 text-slate-950':'text-slate-400 hover:bg-white/5 hover:text-white'}`}>{item}</button>)}
+      {(['NBA','WNBA','NFL'] as Sport[]).map(item=><button key={item} onClick={()=>setExploreSport(item)} className={`rounded-xl px-5 py-2.5 text-sm font-black transition ${exploreSport===item?'bg-cyan-400 text-slate-950':'text-slate-400 hover:bg-white/5 hover:text-white'}`}>{item}</button>)}
     </div>
 
     <section className="mb-10">
@@ -801,7 +850,7 @@ function ExplorePage({ onTrySearch }: { onTrySearch:(search:ExploreSearch)=>void
 function HistoryPage({entries,onRerun,onEdit,onDelete,onClear,onExplore}:{entries:SearchHistoryEntry[];onRerun:(entry:SearchHistoryEntry)=>void;onEdit:(entry:SearchHistoryEntry)=>void;onDelete:(id:string)=>void;onClear:()=>void;onExplore:()=>void}) {
   const conditionLabel=(entry:SearchHistoryEntry,condition:StatCondition)=>{
     const entryScope=entry.searchScope ?? 'Game'
-    const entryDefs=entryScope==='Game'?statDefinitions[entry.sport][entry.searchType]:(entry.sport==='NBA'?(aggregateStatDefinitions[entryScope]?.[entry.searchType]??[]):(nflAggregateStatDefinitions[entryScope]?.[entry.searchType]??[]))
+    const entryDefs=entryScope==='Game'?statDefinitions[entry.sport === 'WNBA' ? 'NBA' : entry.sport][entry.searchType]:(entry.sport==='NFL'?(nflAggregateStatDefinitions[entryScope]?.[entry.searchType]??[]):(aggregateStatDefinitions[entryScope]?.[entry.searchType]??[]))
     const def=entryDefs.find(item=>item.key===condition.statistic)
     const op={gte:'≥',eq:'=',lte:'≤',between:'Between',any:''}[condition.operator]
     return `${def?.label ?? condition.statistic} ${op} ${condition.value ?? ''}${condition.operator==='between'?`–${condition.secondValue ?? ''}`:''}`
@@ -813,7 +862,7 @@ function HistoryPage({entries,onRerun,onEdit,onDelete,onClear,onExplore}:{entrie
     if((entry.careerYearOperator??'Any')!=='Any')labels.push(`Career Year ${entry.careerYearOperator} ${entry.careerYearValue??''}${entry.careerYearOperator==='Between'?`–${entry.careerYearSecondValue??''}`:''}`)
     if(entry.dayOfWeek!=='Any')labels.push(DAY_OPTIONS[Number(entry.dayOfWeek)] ?? entry.dayOfWeek)
     if(entry.month!=='Any')labels.push(MONTH_OPTIONS[Number(entry.month)-1] ?? entry.month)
-    if(entry.specificDate)labels.push(formatMonthDay(entry.specificDate));if((entry.playoffRound??'Any')!=='Any')labels.push(`Playoff Round: ${NBA_PLAYOFF_ROUNDS.find(r=>r.value===entry.playoffRound)?.label??entry.playoffRound}`);if((entry.periodFilter??'Any')!=='Any')labels.push(entry.periodFilter!)
+    if(entry.specificDate)labels.push(formatMonthDay(entry.specificDate));if((entry.playoffRound??'Any')!=='Any')labels.push(`Playoff Round: ${basketballPlayoffRoundLabel(entry.playoffRound!)}`);if((entry.periodFilter??'Any')!=='Any')labels.push(entry.periodFilter!)
     if(entry.player!=='Any')labels.push(`Player: ${entry.player}`)
     if(entry.team!=='Any')labels.push(`Team: ${entry.team}`)
     if(entry.opponent!=='Any')labels.push(`Opponent: ${entry.opponent}`)
@@ -862,7 +911,7 @@ function ActiveFilters({conditions,defs,gameStage,seasonOperator,seasonValue,sea
   if(careerYearOperator!=='Any')items.push({label:`Career Year ${careerYearOperator} ${careerYearValue}${careerYearOperator==='Between'?`–${careerYearSecondValue}`:''}`,clear:onClearCareerYear})
   if(dayOfWeek!=='Any')items.push({label:`Day: ${DAY_OPTIONS[Number(dayOfWeek)] ?? dayOfWeek}`,clear:onClearDayOfWeek})
   if(month!=='Any')items.push({label:`Month: ${MONTH_OPTIONS[Number(month)-1] ?? month}`,clear:onClearMonth})
-  if(specificDate)items.push({label:`Date: ${formatMonthDay(specificDate)}`,clear:onClearSpecificDate});if(playoffRound!=='Any')items.push({label:`Playoff Round: ${NBA_PLAYOFF_ROUNDS.find(r=>r.value===playoffRound)?.label??playoffRound}`,clear:onClearPlayoffRound});if(periodFilter!=='Any')items.push({label:periodFilter,clear:onClearPeriodFilter})
+  if(specificDate)items.push({label:`Date: ${formatMonthDay(specificDate)}`,clear:onClearSpecificDate});if(playoffRound!=='Any')items.push({label:`Playoff Round: ${basketballPlayoffRoundLabel(playoffRound)}`,clear:onClearPlayoffRound});if(periodFilter!=='Any')items.push({label:periodFilter,clear:onClearPeriodFilter})
   if(team!=='Any')items.push({label:`Team: ${team}`,clear:onClearTeam});if(opponent!=='Any')items.push({label:`Opponent: ${opponent}`,clear:onClearOpponent});if(player!=='Any')items.push({label:`Player: ${player}`,clear:onClearPlayer});if(position!=='Any')items.push({label:`Position: ${position}`,clear:onClearPosition});if(result!=='Any')items.push({label:`Result: ${result}`,clear:onClearResult})
   if(!items.length)return null
   return <div className="mt-4"><div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Active filters</div><div className="flex flex-wrap gap-2">{items.map((item,i)=><button type="button" key={`${item.label}-${i}`} onClick={item.clear} title="Clear this filter" className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-rose-400/30 hover:text-white">{item.label} <span className="ml-1 text-slate-500">×</span></button>)}</div></div>
@@ -911,7 +960,7 @@ function BoxScoreDetails({ boxScore, onBack, onClose }: { boxScore:GameBoxScore;
     <div className="flex items-start justify-between gap-4"><div><button onClick={onBack} className="mb-3 text-sm font-bold text-cyan-300 hover:text-cyan-200">← Performance</button><div className="text-xs font-bold uppercase tracking-[.2em] text-slate-500">Game Box Score • {boxScore.gameStage}</div><h2 className="mt-2 text-2xl font-black md:text-3xl">{boxScore.awayTeam} {boxScore.awayScore} <span className="text-slate-600">at</span> {boxScore.homeTeam} {boxScore.homeScore}</h2><p className="mt-1 text-sm text-slate-400">{boxScore.date} • {boxScore.season}</p></div><button onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/5 text-xl text-slate-400 hover:bg-white/10">×</button></div>
     <div className="mt-6 grid grid-cols-2 gap-2 rounded-2xl bg-black/20 p-1.5"><button onClick={()=>setTab('teams')} className={pill(tab==='teams')}>Team Stats</button><button onClick={()=>setTab('players')} className={pill(tab==='players')}>Player Stats</button></div>
     {tab==='teams' ? <TeamBoxScore boxScore={boxScore}/> : <div className="mt-5"><div className="mb-4 flex flex-wrap gap-2">{['Both',boxScore.awayTeam,boxScore.homeTeam].map(team=><button key={team} onClick={()=>setTeamFilter(team)} className={pill(teamFilter===team)}>{team}</button>)}</div><PlayerBoxScore players={players} sport={boxScore.sport}/></div>}
-    <div className="mt-6 rounded-xl border border-cyan-400/10 bg-cyan-400/[.04] px-4 py-3 text-xs leading-5 text-slate-500">NBA box scores come from the ingested NBA Stats data. NFL box scores come from the ingested historical NFL data for 1970–1998 and nflverse weekly player/team statistics from 1999 onward.</div>
+    <div className="mt-6 rounded-xl border border-cyan-400/10 bg-cyan-400/[.04] px-4 py-3 text-xs leading-5 text-slate-500">NBA and WNBA box scores come from the ingested NBA Stats data. NFL box scores come from the ingested historical NFL data for 1970–1998 and nflverse weekly player/team statistics from 1999 onward.</div>
   </section></div>
 }
 
@@ -921,7 +970,7 @@ function TeamBoxScore({ boxScore }: { boxScore:GameBoxScore }) {
 }
 
 function PlayerBoxScore({ players, sport }: { players:GameBoxScore['playerStats']; sport:Sport }) {
-  const preferred = sport==='NBA' ? ['minutes','points','rebounds','assists','steals','blocks','fieldGoalsMade','fieldGoalsAttempted','threePointersMade','turnovers'] : ['passingYards','passingTouchdowns','interceptions','rushingYards','rushingTouchdowns','receptions','receivingYards','receivingTouchdowns','sacks']
+  const preferred = sport!=='NFL' ? ['minutes','points','rebounds','assists','steals','blocks','fieldGoalsMade','fieldGoalsAttempted','threePointersMade','turnovers'] : ['passingYards','passingTouchdowns','interceptions','rushingYards','rushingTouchdowns','receptions','receivingYards','receivingTouchdowns','sacks']
   const keys=preferred.filter(key=>players.some(p=>key in p.stats))
   return <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-sm"><thead><tr className="border-b border-white/10 text-left text-[11px] uppercase tracking-wider text-slate-500"><th className="sticky left-0 bg-[#08111f] px-3 py-3">Player</th><th className="px-3 py-3">Team</th><th className="px-3 py-3">Pos</th>{keys.map(k=><th key={k} className="px-3 py-3 text-right">{shortStat(k)}</th>)}</tr></thead><tbody>{players.map(p=><tr key={p.id} className="border-b border-white/[.06]"><td className="sticky left-0 bg-[#08111f] px-3 py-3 font-bold">{p.name}</td><td className="px-3 py-3 text-slate-400">{p.team}</td><td className="px-3 py-3 text-slate-400">{p.position}</td>{keys.map(k=><td key={k} className="px-3 py-3 text-right font-semibold">{p.stats[k] ?? '—'}</td>)}</tr>)}</tbody></table></div>
 }

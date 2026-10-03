@@ -1,4 +1,4 @@
-export type Sport = 'NBA' | 'NFL'
+export type Sport = 'NBA' | 'WNBA' | 'NFL'
 export type SearchType = 'Player' | 'Team'
 export type SearchScope = 'Game' | 'Season' | 'Career'
 export type Operator = 'any' | 'gte' | 'eq' | 'lte' | 'between'
