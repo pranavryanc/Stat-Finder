@@ -3,14 +3,14 @@
 
 Examples:
 
-    # Automatically determine the current NBA season and load only new games
+    # Automatically determine the current NBA season and load new/incomplete games
     python scripts/ingest_nba.py
 
     # Load/update a specific season
-    python scripts/ingest_nba.py --season 2025-26
+    python scripts/ingest_nba.py --season 2026-27
 
     # Force every game's box score to be fetched again
-    python scripts/ingest_nba.py --season 2025-26 --force
+    python scripts/ingest_nba.py --season 2026-27 --force
 """
 
 import argparse
@@ -33,7 +33,7 @@ def num(v, default=None):
         return default
     try:
         return float(v)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
@@ -47,10 +47,58 @@ def mins(v):
         a, b = s.split(":", 1)
         try:
             return round(float(a) + float(b) / 60, 3)
-        except Exception:
+        except (TypeError, ValueError):
             return None
 
     return num(v)
+
+
+def played_status(player):
+    """Determine whether a player participated in a game."""
+
+    minutes = mins(player.get("minutes"))
+
+    if minutes is not None:
+        return minutes > 0
+
+    comment = str(player.get("comment") or "").strip().upper()
+
+    if any(
+        status in comment
+        for status in (
+            "DNP",
+            "DND",
+            "NWT",
+            "DID NOT PLAY",
+            "DID NOT DRESS",
+            "NOT WITH TEAM",
+            "INACTIVE",
+        )
+    ):
+        return False
+
+    # No playing time or recorded statistics.
+    # Treat as DNP only when the box score is complete.
+    return None
+
+def starter_status(player):
+    """Identify starters when NBA.com provides a starter indicator.
+
+    The position field commonly contains a starting lineup position
+    such as F, C, or G. Bench players generally have an empty position.
+
+    Returns None when starter status cannot be determined.
+    """
+
+    position = str(player.get("position") or "").strip().upper()
+
+    if position in {"F", "C", "G", "F-G", "G-F", "F-C", "C-F"}:
+        return True
+
+    if played_status(player) is True:
+        return False
+
+    return None
 
 
 def automatic_season():
@@ -119,7 +167,10 @@ def fetch_box(game_id):
 
 
 def game_is_complete(conn, game_id):
-    """Check whether Stat Finder already has a usable complete game."""
+    """Check whether Stat Finder already has a usable complete game.
+
+    Games with unresolved player participation are reprocessed.
+    """
 
     game_exists = conn.execute(
         """
@@ -144,16 +195,22 @@ def game_is_complete(conn, game_id):
         (game_id,),
     ).fetchone()[0]
 
-    player_count = conn.execute(
+    player_count, unresolved_count = conn.execute(
         """
-        SELECT COUNT(*)
+        SELECT
+            COUNT(*),
+            COUNT(*) FILTER (WHERE played IS NULL)
         FROM nba_player_games
         WHERE game_id = %s
         """,
         (game_id,),
-    ).fetchone()[0]
+    ).fetchone()
 
-    return team_count >= 2 and player_count > 0
+    return (
+        team_count >= 2
+        and player_count > 0
+        and unresolved_count == 0
+    )
 
 
 def main():
@@ -403,6 +460,10 @@ def main():
                         + str(player.get("familyName", ""))
                     ).strip()
 
+                    player_minutes = mins(player.get("minutes"))
+                    player_played = played_status(player)
+                    player_starter = starter_status(player)
+
                     vals = (
                         game_id,
                         int(player["personId"]),
@@ -412,8 +473,9 @@ def main():
                         oppid,
                         opponent,
                         player.get("position"),
-                        None,
-                        mins(player.get("minutes")),
+                        player_starter,
+                        player_minutes,
+                        player_played,
                         player["points"],
                         player["reboundsTotal"],
                         player["assists"],
@@ -448,6 +510,7 @@ def main():
                             position,
                             starter,
                             minutes,
+                            played,
                             points,
                             rebounds,
                             assists,
@@ -471,16 +534,37 @@ def main():
                         VALUES(
                             %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                             %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                            %s,%s,%s,%s,%s,%s,%s,%s,%s
+                            %s,%s,%s,%s,%s,%s,%s,%s,%s,%s
                         )
                         ON CONFLICT(game_id, player_id)
                         DO UPDATE SET
+                            player_name = EXCLUDED.player_name,
+                            team_id = EXCLUDED.team_id,
+                            team = EXCLUDED.team,
+                            opponent_id = EXCLUDED.opponent_id,
+                            opponent = EXCLUDED.opponent,
+                            position = EXCLUDED.position,
+                            starter = EXCLUDED.starter,
                             minutes = EXCLUDED.minutes,
+                            played = EXCLUDED.played,
                             points = EXCLUDED.points,
                             rebounds = EXCLUDED.rebounds,
                             assists = EXCLUDED.assists,
                             steals = EXCLUDED.steals,
                             blocks = EXCLUDED.blocks,
+                            fg_made = EXCLUDED.fg_made,
+                            fg_attempted = EXCLUDED.fg_attempted,
+                            fg_pct = EXCLUDED.fg_pct,
+                            three_made = EXCLUDED.three_made,
+                            three_attempted = EXCLUDED.three_attempted,
+                            three_pct = EXCLUDED.three_pct,
+                            ft_made = EXCLUDED.ft_made,
+                            ft_attempted = EXCLUDED.ft_attempted,
+                            ft_pct = EXCLUDED.ft_pct,
+                            offensive_rebounds = EXCLUDED.offensive_rebounds,
+                            defensive_rebounds = EXCLUDED.defensive_rebounds,
+                            turnovers = EXCLUDED.turnovers,
+                            personal_fouls = EXCLUDED.personal_fouls,
                             plus_minus = EXCLUDED.plus_minus
                         """,
                         vals,
